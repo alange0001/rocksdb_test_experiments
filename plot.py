@@ -37,7 +37,7 @@ class Options:
 	graphTickMajor = 5
 	graphTickMinor = 5
 	plot_db = True
-	db_mean_interval = 2
+	db_mean_interval = None
 	db_xlim = None
 	db_ylim = [0,  None]
 	file_start_time = None
@@ -552,20 +552,28 @@ class File:
 		if pkey is None: return None
 		if len(self._data[pkey]) < 2: return None
 
-		interval = float(self._data[pkey][1]['time'] - self._data[pkey][0]['time'])
-		l_interval, u_interval = int(interval // 2.0), int(-(-interval // 2.0))
-		# print(interval, l_interval, u_interval)
-
-		buckets = collections.OrderedDict()
-		bucket_list = []
+		buckets_data = collections.OrderedDict()
 		for d in self._data[pkey]:
 			t = d['time']
 			bd = collections.OrderedDict()
 			bd['time'] = t
 			flat_dict(d, prefix=pkey, ret=bd)
-			bucket_list.append(bd)
-			for j in range(t - l_interval, t + u_interval + 1):
-				buckets[j] = bd
+			buckets_data[t] = bd
+
+		interval = int(self._data[pkey][1]['time'] - self._data[pkey][0]['time'])
+		buckets = collections.OrderedDict()
+		for i in range(max(buckets_data.keys())+interval+1):
+			for j in range(1,100):
+				bd = buckets_data.get(i - j)
+				if bd is not None:
+					buckets[i] = bd
+					break
+				bd = buckets_data.get(i + j)
+				if bd is not None:
+					buckets[i] = bd
+					break
+			if buckets.get(i) is None:
+				print(f'WARN: bucket {i} does not exist')
 
 		for k, d in self._data.items():
 			if k != pkey:
@@ -577,7 +585,7 @@ class File:
 						print(f'WARN: time {di["time"]} of key {k} not found in buckets')
 
 		transpose = collections.OrderedDict()
-		for list_i in bucket_list:
+		for list_i in buckets_data.values():
 			for k, v in list_i.items():
 				if transpose.get(k) is None:
 					transpose[k] = []
@@ -670,6 +678,11 @@ class File:
 			if self._options.db_mean_interval is not None:
 				X, Y = self.get_mean(Xplot, Yplot, self._options.db_mean_interval)
 				ax.plot(X, Y, '-', lw=1, label=f'db_bench mean')
+			elif self._num_at > 0:
+				df = self.pd_data.groupby(['w_name']).agg(
+					{'time_min': 'mean', 'db_bench[0].ops_per_s': 'mean'}
+					).sort_values('time_min')
+				sns.lineplot(ax=ax, x='time_min', y='db_bench[0].ops_per_s', data=df)
 
 		for i in range(0, num_ycsb):
 			try:
@@ -691,6 +704,11 @@ class File:
 			if self._options.db_mean_interval is not None:
 				X, Y = self.get_mean(Xplot, Yplot, self._options.db_mean_interval)
 				ax.plot(X, Y, '-', lw=1, label=f'ycsb {i_label} mean')
+			elif self._num_at > 0:
+				df = self.pd_data.groupby(['w_name']).agg(
+					{'time_min': 'mean', 'ycsb[0].ops_per_s': 'mean'}
+					).sort_values('time_min')
+				sns.lineplot(ax=ax, x='time_min', y='ycsb[0].ops_per_s', data=df)
 
 		if self._options.db_xlim is not None:
 			ax.set_xlim( self._options.db_xlim )
