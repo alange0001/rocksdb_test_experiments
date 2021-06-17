@@ -24,7 +24,9 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import (AutoMinorLocator, MultipleLocator)
 from mpl_toolkits.axes_grid1 import host_subplot
 import pandas as pd
-
+import seaborn as sns
+sns.set()
+sns.set_style('white')
 
 class Options:
 	formats = ['png', 'pdf']
@@ -122,73 +124,73 @@ DB = DBClass()
 
 class AllFiles:
 	_options = None
-	_dbmean = None
 	_filename = None
+	_file_list = None
+	_file_objs = None
 
-	def __init__(self, filename, options=None):
-		self._dbmean = []
+	def __init__(self, filename, options=None, file_list=None):
 		self._options = options
 		self._filename = filename
+		self._file_list = []
+		self._file_objs = []
+		for i in file_list if isinstance(file_list, list) else []:
+			self.add_file(i)
+
+	def add_file(self, filename):
+		f = File(filename, self._options, allfiles=self)
+		self._file_list.append(filename)
+		self._file_objs.append(f)
+		return f
+
+	def __len__(self):
+		return len(self._file_list)
+
+	def __getitem__(self, item):
+		if isinstance(item, int):
+			return self._file_objs[item]
+		else:
+			raise Exception(f'Invalid index for the class {self.__class__.__name__}: {item}')
+
+	@property
+	def file_names(self):
+		return self._file_list
 
 	def check_options(self, options):
 		if self._options is None:
 			self._options = options
 
 	def graph_all(self):
+		for i in range(0, len(self._file_list)):
+			self._file_objs[i].graph_all()
+
+		print('AllFiles Graphs:')
 		if self._options.plot_all_dbmean:
 			self.graph_dbmean()
 		if self._options.plot_all_pressure:
 			self.graph_pressure()
 
-	def add_dbmean_data(self, label, X, Y, W_ticks, W_labels):
-		ret = {
-			'label':label,
-			'X':X,
-			'Y':Y,
-			'W_ticks':W_ticks,
-			'W_labels':W_labels}
-		self._dbmean.append(ret)
-		return ret
-
-	def set_dblim(self, X, Y):
-		self._xlim = X
-		self._ylim = Y
-
 	def graph_dbmean(self):
-		if len(self._dbmean) == 0:
-			return
+		pressures = self.file_pressures
+		if len(pressures) == 0: return
 
-		fig = plt.gcf()
-		# fig, ax = plt.subplots()
-		ax = host_subplot(111, figure=fig)
+		fig, ax = plt.subplots()
 		fig.set_figheight(3)
 		fig.set_figwidth(8)
 
-		for v in self._dbmean:
-			X = v['X']
-			Y = v['Y']
-			ax.plot(X, Y, '-', lw=1, label=v['label'])
+		for i in range(len(self._file_objs)):
+			f = self._file_objs[i]
+			fp = self.file_pressures[i]
 
-		if v.get('W_ticks') is not None:
-			ax2 = ax.twin()
-			ax2.set_xticks(v['W_ticks'])
-			ax2.set_xticklabels(v['W_labels'], rotation=90)
-			ax2.axis["right"].major_ticklabels.set_visible(False)
-			ax2.axis["top"].major_ticklabels.set_visible(True)
+			sns.lineplot(ax=ax, x='w_name', y='ycsb[0].ops_per_s', data=f.pd_data,
+			             label=fp['file_label'] if fp is not None else 'None')
 
 		if self._options.db_xlim is not None:
 			ax.set_xlim( self._options.db_xlim )
 		if self._options.db_ylim is not None:
 			ax.set_ylim( self._options.db_ylim )
 
-		if self._options.graphTickMajor is not None:
-			ax.xaxis.set_major_locator(MultipleLocator(self._options.graphTickMajor))
-			ax.xaxis.set_minor_locator(AutoMinorLocator(self._options.graphTickMinor))
-			ax.grid(which='major', color='#CCCCCC', linestyle='--')
-			ax.grid(which='minor', color='#CCCCCC', linestyle=':')
-
+		ax.grid(which='major', color='#CCCCCC', linestyle='--')
 		ax.set(xlabel="time (min)", ylabel="tx/s")
-
 		ax.legend(loc='best', ncol=1, frameon=True)
 
 		if self._options.save:
@@ -197,19 +199,24 @@ class AllFiles:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	_pressure_data = None
+	_file_pressures = None
+	@property
+	def file_pressures(self):
+		if self._file_pressures is not None:
+			return self._file_pressures
 
-	def add_pressure_data(self, line_label: str, x: list, x_labels: list) -> None:
-		if self._pressure_data is None:
-			self._pressure_data = []
-		self._pressure_data.append( (line_label, x, x_labels) )
+		self._file_pressures = []
+		for f in self._file_objs:
+			self._file_pressures.append(f.pressure_data)
+		return self._file_pressures
 
 	def graph_pressure(self) -> None:
-		if self._pressure_data is None:
+		pressures = self.file_pressures
+		if len(pressures) == 0:
 			return
 
 		colors = plt.get_cmap('tab10').colors
-		n_data = len(self._pressure_data)
+		n_data = len(pressures)
 
 		fig, ax = plt.subplots()
 		fig.set_figheight(0.7 * n_data)
@@ -218,10 +225,12 @@ class AllFiles:
 		Y_labels = []
 		Y_ticks = []
 		i_ax = 0
-		for data in self._pressure_data:
-			line_label = data[0]
-			X = data[1]
-			X_labels = data[2]
+		for data in pressures:
+			if data is None: continue
+
+			line_label = data['file_label']
+			X = data['W_normalized']
+			X_labels = data['W_names']
 			Y_labels.append(line_label)
 
 			for i in range(len(X)):
@@ -252,12 +261,16 @@ class AllFiles:
 
 class File:
 	_filename    = None
+	@property
+	def filename(self): return self._filename
 	_options     = None
 	_allfiles    = None
 	_params      = None
 
 	_stats_interval = None
 	_data           = None
+	@property
+	def data(self): return self._data
 	_dbbench        = None
 
 	_plotdata = None  # get data from generated graphs
@@ -410,7 +423,6 @@ class File:
 		return (self._num_dbs, self._num_ydbs)
 
 	_at3_changes = None
-
 	@property
 	def at3_changes(self):
 		if self._at3_changes is None:
@@ -431,7 +443,6 @@ class File:
 		return self._at3_changes
 
 	_w_list = None
-
 	@property
 	def w_list(self):
 		if self._w_list is None and self._num_at > 0:
@@ -526,6 +537,89 @@ class File:
 		pd2 = pd1.groupby(['X']).agg({'Y':'mean'}).sort_values('X')
 		return list(pd2.index), list(pd2['Y'])
 
+	_pd_data = None
+
+	@property
+	def pd_data(self):
+		if self._pd_data is not None:
+			return self._pd_data
+
+		pkey = None
+		for i in ['ycsb[0]', 'db_bench[0]', 'access_time3[0]', 'performancemonitor']:
+			if i in self._data.keys():
+				pkey = i
+				break
+		if pkey is None: return None
+		if len(self._data[pkey]) < 2: return None
+
+		interval = float(self._data[pkey][1]['time'] - self._data[pkey][0]['time'])
+		l_interval, u_interval = int(interval // 2.0), int(-(-interval // 2.0))
+		# print(interval, l_interval, u_interval)
+
+		buckets = collections.OrderedDict()
+		bucket_list = []
+		for d in self._data[pkey]:
+			t = d['time']
+			bd = collections.OrderedDict()
+			bd['time'] = t
+			flat_dict(d, prefix=pkey, ret=bd)
+			bucket_list.append(bd)
+			for j in range(t - l_interval, t + u_interval + 1):
+				buckets[j] = bd
+
+		for k, d in self._data.items():
+			if k != pkey:
+				for di in d:
+					bucket_i = buckets.get(di['time'])
+					if bucket_i is not None:
+						flat_dict(di, prefix=k, ret=bucket_i)
+					elif di['time'] < max(buckets.keys()):
+						print(f'WARN: time {di["time"]} of key {k} not found in buckets')
+
+		transpose = collections.OrderedDict()
+		for list_i in bucket_list:
+			for k, v in list_i.items():
+				if transpose.get(k) is None:
+					transpose[k] = []
+				if k != 'time':
+					while len(transpose[k]) < len(transpose['time'])-1:
+						transpose[k].append(None)
+				transpose[k].append(self._pd_data_convert(k, v))
+
+		ret = pd.DataFrame(transpose)
+		ret['time_min'] = ret['time'] / 60.0
+
+		if self._num_at > 0:
+			w_name = []
+			w_num = []
+			for _, d in ret.iterrows():
+				last_name = None
+				last_num  = None
+				for w in self.w_list.values():
+					if w['time'] > d['time']:
+						break
+					last_name = w['name']
+					last_num  = w['number']
+
+				w_name.append(last_name)
+				w_num.append(last_num)
+
+			ret['w']      = w_num
+			ret['w_name'] = w_name
+		else:
+			ret['w']      = [None for _ in range(len(ret))]
+			ret['w_name'] = [None for _ in range(len(ret))]
+
+		self._pd_data = ret
+		return ret
+
+	def _pd_data_convert(self, key, value):
+		if key.find('rocksdb.cfstats.compaction') > 0:
+			#if key.find('SizeBytes') > 0:
+			#	return try_convert(value, float)
+			return try_convert(value, float)
+		return value
+
 	def cut_begin(self, X, Y, start):
 		retX, retY = [], []
 		for i in range(len(X)):
@@ -576,8 +670,6 @@ class File:
 			if self._options.db_mean_interval is not None:
 				X, Y = self.get_mean(Xplot, Yplot, self._options.db_mean_interval)
 				ax.plot(X, Y, '-', lw=1, label=f'db_bench mean')
-				if i == 0 and self._allfiles is not None and self._params['num_at'] > 0:
-					allfiles_d = self._allfiles.add_dbmean_data(f"bs{self._params['at_block_size[0]']}", X, Y, None, None)
 
 		for i in range(0, num_ycsb):
 			try:
@@ -599,8 +691,6 @@ class File:
 			if self._options.db_mean_interval is not None:
 				X, Y = self.get_mean(Xplot, Yplot, self._options.db_mean_interval)
 				ax.plot(X, Y, '-', lw=1, label=f'ycsb {i_label} mean')
-				if i == 0 and self._allfiles is not None and self._params['num_at'] > 0:
-					allfiles_d = self._allfiles.add_dbmean_data(f"bs{self._params['at_block_size[0]']}", X, Y, None, None)
 
 		if self._options.db_xlim is not None:
 			ax.set_xlim( self._options.db_xlim )
@@ -1060,8 +1150,8 @@ class File:
 			plt.show()
 
 	_pressure_data = None
-
-	def get_pressure_data(self):
+	@property
+	def pressure_data(self):
 		if self._pressure_data is None:
 			ret = dict()
 
@@ -1108,12 +1198,25 @@ class File:
 			ret['W_pressure'] = [i[0] for i in pd2.values]
 			ret['W_normalized'] = [(w0 - i) / w0 for i in ret['W_pressure']]
 
+			ret['time'] = []
+			ret['time_min'] = []
+			for n in ret['W_names']:
+				t = self.w_list[n]['time']
+				ret['time'].append(t)
+				ret['time_min'].append(t/60.0)
+
+			if callable(self._options.all_pressure_label):
+				file_label = self._options.all_pressure_label(self)
+			else:
+				file_label = f'bs = {self._params["at_block_size[0]"]}'
+			ret['file_label'] = file_label
+
 			self._pressure_data = ret
 
 		return self._pressure_data
 
 	def graph_pressure(self):
-		data = self.get_pressure_data()
+		data = self.pressure_data
 		if data is None: return
 		pd2 = data['pd2']
 
@@ -1452,18 +1555,8 @@ class File:
 			ax.grid(which='major', color='#CCCCCC', linestyle='--')
 			ax.grid(which='minor', color='#CCCCCC', linestyle=':')
 
-	def save_allfiles_data(self):
-		pressure_data = self.get_pressure_data()
-		if pressure_data is not None:
-			if callable(self._options.all_pressure_label):
-				pressure_label = self._options.all_pressure_label(self)
-			else:
-				pressure_label = f'bs = {self._params["at_block_size[0]"]}'
-			self._allfiles.add_pressure_data(pressure_label,
-			                                 pressure_data['W_normalized'],
-			                                 pressure_data['W_names'])
-
 	def graph_all(self):
+		print(f'Graphs from file "{self._filename}":')
 		description = self._filename
 		if self._options.file_description is not None:
 			if isinstance(self._options.file_description, str):
@@ -1513,9 +1606,6 @@ class File:
 		if self._options.plot_io_norm: self.graph_io_norm()
 		# exp_at3:
 		if self._options.plot_at3_write_ratio: self.graph_at3_write_ratio()
-
-		if self._allfiles is not None:
-			self.save_allfiles_data()
 
 
 def graph_at3_script(filename, num_at3, max_w):
@@ -1654,6 +1744,24 @@ def binary_suffix(value):
 		raise Exception("invalid number")
 
 
+def flat_dict(source, prefix=None, ret=None):
+	prefix_add = '' if prefix is None else f'{prefix}.'
+
+	if ret is None:
+		ret = collections.OrderedDict()
+
+	if isinstance(source, dict):
+		for k, v in source.items():
+			flat_dict(v, prefix=f'{prefix_add}{k}', ret=ret)
+	elif isinstance(source, list):
+		for i in range(len(source)):
+			flat_dict(source[i], prefix=f'{prefix_add}{i}', ret=ret)
+	else:
+		ret[prefix if prefix is not None else 'NONE'] = source
+
+	return ret
+
+
 def getFiles(dirname: str, str_filter: str = None, list_filter: list = None, lambda_filter=None) -> list:
 	if not os.path.isdir(dirname):
 		print(f'WARNING: "{dirname}" is not a directory')
@@ -1695,15 +1803,13 @@ def getFiles(dirname: str, str_filter: str = None, list_filter: list = None, lam
 def plotFiles(filenames, options, allfiles=None):
 	if isinstance(allfiles, str):
 		allfiles = AllFiles(allfiles, options)
-
-	for name in filenames:
-		print('Graphs from file "{}":'.format(name))
-		f = File(name, options, allfiles=allfiles)
-		f.graph_all()
-		del f
-
-	if allfiles is not None:
-		print('AllFiles Graphs:')
+	if allfiles is None:
+		for name in filenames:
+			f = File(name, options)
+			f.graph_all()
+	else:
+		for name in filenames:
+			allfiles.add_file(name)
 		allfiles.graph_all()
 
 
