@@ -56,6 +56,8 @@ class Options:
 	plot_ycsb_lsm_details = True
 	plot_ycsb_lsm_summary = True
 	plot_smart_utilization = True
+	plot_pairgrid = False
+	plot_pairgrid_kv = False
 	use_at3_counters = True
 	at3_ticks = True
 	fio_folder = None
@@ -584,6 +586,7 @@ class File:
 					elif di['time'] < max(buckets.keys()):
 						print(f'WARN: time {di["time"]} of key {k} not found in buckets')
 
+		# Prepare data for the DataFrame
 		transpose = collections.OrderedDict()
 		for list_i in buckets_data.values():
 			for k, v in list_i.items():
@@ -591,8 +594,14 @@ class File:
 					transpose[k] = []
 				if k != 'time':
 					while len(transpose[k]) < len(transpose['time'])-1:
-						transpose[k].append(None)
+						transpose[k].append(None) # Missing data inside the time series
 				transpose[k].append(self._pd_data_convert(k, v))
+		# Add missing data at the end of each column
+		len_time = len(transpose['time'])
+		for v in transpose.values():
+			len_v = len(v)
+			for _ in range(0, len_time - len_v):
+				v.append(None)
 
 		ret = pd.DataFrame(transpose)
 		ret['time_min'] = ret['time'] / 60.0
@@ -1566,6 +1575,75 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
+	def graph_pairgrid(self):
+		if self._num_ydbs > 0:
+			first_metrics = {
+				"ycsb[0].ops_per_s": "kv:ops/s",
+				'performancemonitor.containers.ycsb_0.blkio.serviced/s.Read': 'kv:r/s',
+				'performancemonitor.containers.ycsb_0.blkio.serviced/s.Write': 'kv:w/s',
+			}
+			pairgrid_kargs = {'hue':'w'}
+		elif self._num_at > 0:
+			first_metrics = {"access_time3[0].iodepth": "iodepth"}
+			pairgrid_kargs = {}
+		else:
+			return
+
+		cols = {
+			**first_metrics,
+			"performancemonitor.disk.iostat.r/s": "disk:r/s", #IOPS
+			"performancemonitor.disk.iostat.w/s": "disk:w/s",
+			"performancemonitor.disk.iostat.rareq-sz": "disk:r_size", #block size
+			"performancemonitor.disk.iostat.wareq-sz": "disk:w_size",
+			"performancemonitor.disk.iostat.aqu-sz": "disk:queue", #iodepth
+			"performancemonitor.disk.iostat.r_await": "disk:r_await",
+			"performancemonitor.disk.iostat.w_await": "disk:w_await",
+		}
+		df = self.pd_data
+
+		df2 = df.rename(columns=cols)
+		g = sns.PairGrid(df2, vars=[i for i in cols.values()], diag_sharey=False, palette='viridis', **pairgrid_kargs)
+		m1 = g.map_upper(sns.scatterplot)
+		m2 = g.map_lower(sns.scatterplot)
+		g.map_diag(sns.ecdfplot)
+		g.add_legend()
+		for ax in [i for i in m1.axes.flat]+[i for i in m2.axes.flat]:
+			ax.grid(which='major', color='#888888', linestyle='--')
+			ax.grid(which='minor', color='#CCCCCC', linestyle=':')
+
+		fig = g.fig
+		if self._options.save:
+			for f in self._options.formats:
+				save_name = f'{self._filename_without_ext}_graph_pairgrid.{f}'
+				fig.savefig(save_name, bbox_inches="tight")
+		plt.show()
+
+	def graph_pairgrid_kv(self):
+		cols = {
+			"ycsb[0].ops_per_s": "ops/s",
+			'performancemonitor.containers.ycsb_0.blkio.serviced/s.Read': 'r/s',
+			'performancemonitor.containers.ycsb_0.blkio.serviced/s.Write': 'w/s',
+		}
+
+		df = self.pd_data
+		df2 = df.rename(columns=cols)
+
+		g = sns.PairGrid(df2, hue='w', vars=[v for v in cols.values()], diag_sharey=False, palette='viridis')
+		m1 = g.map_upper(sns.scatterplot)
+		m2 = g.map_lower(sns.kdeplot)
+		g.map_diag(sns.ecdfplot)
+		for ax in [i for i in m1.axes.flat] + [i for i in m2.axes.flat]:
+			ax.grid(which='major', color='#888888', linestyle='--')
+			ax.grid(which='minor', color='#CCCCCC', linestyle=':')
+		g.add_legend()
+
+		fig = g.fig
+		if self._options.save:
+			for f in self._options.formats:
+				save_name = f'{self._filename_without_ext}_graph_pairgrid_kv.{f}'
+				fig.savefig(save_name, bbox_inches="tight")
+		plt.show()
+
 	def set_x_ticks(self, ax):
 		if self._options.graphTickMajor is not None:
 			ax.xaxis.set_major_locator(MultipleLocator(self._options.graphTickMajor))
@@ -1618,6 +1696,12 @@ class File:
 		if self._options.plot_smart_utilization:
 			print(f'Occupied flash pages: {description}')
 			self.graph_smart_utilization()
+		if self._options.plot_pairgrid:
+			print(f'Pair grid: {description}')
+			self.graph_pairgrid()
+		if self._options.plot_pairgrid_kv:
+			print(f'Pair grid KV: {description}')
+			self.graph_pairgrid_kv()
 
 		## Special case graphs:
 		# exp_at3_rww:
