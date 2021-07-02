@@ -188,11 +188,13 @@ local at_script_gen=${at_script_gen:-1}
 local at_interval=${at_interval:-2}
 local at_block_size_list=${at_block_size_list:-4 8 16 32 64 128 256 512}
 local at_o_dsync=${at_o_dsync:-true}
+local at_random_ratio=${at_random_ratio:-0.5}
 
 cat <<EOB >"$args_file"
 {
 	"output_path": "`dirname ${BASH_SOURCE[0]}`",
 	"output_prefix": "$output_prefix",
+	"output_suffix": "$output_suffix",
 	"data_path": "$data_path",
 	"before_run_cmd": "echo telegram-send 'Initiating experiment {output}'; sudo fstrim $data_path; sleep 30",
 	"after_run_cmd": "telegram-send 'Experiment {output} returned exit code {exit_code}'",
@@ -210,6 +212,7 @@ cat <<EOB >"$args_file"
 	"at_script_gen": $at_script_gen,
 	"at_interval": $at_interval,
 	"at_block_size_list": "$at_block_size_list",
+	"at_random_ratio": "$at_random_ratio",
 	"params": "--perfmon --ydb_socket=true",
 	"__docker_params": "-e ROCKSDB_TR_SOCKET=/tmp/host/rocksdb.sock"
 }
