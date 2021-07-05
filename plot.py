@@ -36,8 +36,9 @@ class Options:
 	savePlotData = False
 	graphTickMajor = 5
 	graphTickMinor = 5
+	args_global = {'title': 'default+filename'}
 	plot_db = True
-	db_mean_interval = None
+	args_db = dict()
 	db_xlim = None
 	db_ylim = [0,  None]
 	file_start_time = None
@@ -49,15 +50,16 @@ class Options:
 	plot_io_norm = False
 	plot_at3_write_ratio = False
 	plot_pressure = False
-	pressure_decreased = True
-	print_pressure_values = False
+	args_pressure = dict()
 	plot_containers_io = True
 	plot_ycsb_lsm_size = True
 	plot_ycsb_lsm_details = True
 	plot_ycsb_lsm_summary = True
 	plot_smart_utilization = True
 	plot_pairgrid = False
+	args_pairgrid = dict()
 	plot_pairgrid_kv = False
+	args_pairgrid_kv = dict()
 	use_at3_counters = True
 	at3_ticks = True
 	fio_folder = None
@@ -76,13 +78,20 @@ class Options:
 		return cp
 
 	def _process_args(self, args: dict) -> None:
-		for k,v in args.items():
+		deprecated = {
+			'db_mean_interval': 'use args_db["mean_interval"] instead',
+			'pressure_decreased': 'use args_pressure["mark_decreased"] instead',
+			'print_pressure_values': 'use args_pressure["print_values"] instead',
+		}
+		for k, v in args.items():
 			if k == 'plot_nothing':
 				if v:
 					for i in dir(self):
 						if 'plot_' in i:
 							self.__setattr__(i, False)
 			elif k in dir(self):
+				if k in deprecated.keys():
+					raise Exception(f'Option {k} is DEPRECATED: {deprecated[k]}')
 				self.__setattr__(k, v)
 			else:
 				raise Exception('Invalid option name: {}'.format(k))
@@ -539,6 +548,13 @@ class File:
 		pd2 = pd1.groupby(['X']).agg({'Y':'mean'}).sort_values('X')
 		return list(pd2.index), list(pd2['Y'])
 
+	def overlap_args(self, *args_list):
+		args = copy.copy(self._options.args_global)
+		for args_i in args_list:
+			for k, v in args_i.items():
+				args[k] = v
+		return args
+
 	_pd_data = None
 
 	@property
@@ -645,13 +661,28 @@ class File:
 				retY.append(Y[i])
 		return (retX, retY)
 
-	def graph_db(self):
+	def get_graph_title(self, args, graph_default):
+		if args.get('title') is None:
+			return None
+		if callable(args.get('title')):
+			return args['title'](self, graph_default)
+		if args.get('title') == 'default':
+			return graph_default
+		if args.get('title') == 'filename':
+			return self.filename
+		if args.get('title') == 'filename+default':
+			return f'{self.filename}\n{graph_default}'
+		if args.get('title') == 'default+filename':
+			return f'{graph_default}\n{self.filename}'
+		return args.get('title') if isinstance(args.get('title'), str) else '(unknown type)'
+
+	def graph_db(self, **kargs):
 		num_dbbench, num_ycsb = self.count_dbs()
 		if num_dbbench == 0 and num_ycsb == 0:
 			return
 
-		# fig = plt.gcf()
-		# ax = host_subplot(111, figure=fig)
+		args = self.overlap_args(self._options.args_db, kargs)
+
 		fig, ax = plt.subplots()
 		fig.set_figheight(3)
 		fig.set_figwidth(9)
@@ -684,8 +715,8 @@ class File:
 					Xplot, Yplot = X, Y
 				ax.plot(Xplot, Yplot, '-', lw=1, label=f'db_bench (expected)')
 
-			if self._options.db_mean_interval is not None:
-				X, Y = self.get_mean(Xplot, Yplot, self._options.db_mean_interval)
+			if args.get('mean_interval') is not None:
+				X, Y = self.get_mean(Xplot, Yplot, args.get('mean_interval'))
 				ax.plot(X, Y, '-', lw=1, label=f'db_bench mean')
 			elif self._num_at > 0:
 				df = self.pd_data.groupby(['w_name']).agg(
@@ -710,8 +741,8 @@ class File:
 			Ymax = max([Ymax, max(Yplot)])
 			ax.plot(Xplot, Yplot, '-', lw=1, label=f'ycsb {i_label}')
 
-			if self._options.db_mean_interval is not None:
-				X, Y = self.get_mean(Xplot, Yplot, self._options.db_mean_interval)
+			if args.get('mean_interval') is not None:
+				X, Y = self.get_mean(Xplot, Yplot, args.get('mean_interval'))
 				ax.plot(X, Y, '-', lw=1, label=f'ycsb {i_label} mean')
 			elif self._num_at > 0:
 				df = self.pd_data.groupby(['w_name']).agg(
@@ -736,7 +767,8 @@ class File:
 				allfiles_d['W_ticks'] = X2_ticks
 				allfiles_d['W_labels'] = X2_labels
 
-		ax.set(title="Key-Value Store's Performance", xlabel="time (min)", ylabel="tx/s")
+		ax.set(xlabel="time (min)", ylabel="tx/s")
+		ax.set(title=self.get_graph_title(args, "Key-Value Store's Performance"))
 
 		#chartBox = ax.get_position()
 		#ax.set_position([chartBox.x0, chartBox.y0, chartBox.width*0.65, chartBox.height])
@@ -1242,10 +1274,14 @@ class File:
 
 		return self._pressure_data
 
-	def graph_pressure(self):
+	def graph_pressure(self, **kargs):
 		data = self.pressure_data
 		if data is None: return
 		pd2 = data['pd2']
+
+		args = copy.copy(self._options.args_pressure)
+		for k, v in kargs.items():
+			args[k] = v
 
 		fig = plt.figure()
 		fig.set_figheight(2.8)
@@ -1281,7 +1317,7 @@ class File:
 				Y3.append(Y2[i])
 			else:
 				min_p = Y2[i]
-		if self._options.pressure_decreased:
+		if args.get('mark_decreased'):
 			ax2.plot(X3, Y3, '*', label='decreased', color='red')
 		ax2.legend(loc='upper right', ncol=2, frameon=False)
 		ax2.set(ylabel="normalized pressure")
@@ -1290,13 +1326,13 @@ class File:
 		ax2.set_ylim([min(0, min(Y2)), 1.1])
 
 		######################################################
-		ax = fig.add_axes([0,0.62,1,0.16])
+		ax = fig.add_axes([0, 0.62, 1, 0.16])
 
 		X = data['W_normalized']
 		Y = [0 for i in X]
 		ax.plot(X, Y, 'o', label='pressure')
 
-		if self._options.print_pressure_values:
+		if args.get('print_values'):
 			print(f'Pressure values: {", ".join([f"w{i}={X[i]:.3f}" for i in range(0,len(X))])}\n')
 
 		ax.set_xlim([min(0, min(X))-0.05, 1.05])
@@ -1306,7 +1342,6 @@ class File:
 		for i in range(len(X)):
 			ax.annotate(f'{X_labels[i]}', xy=(X[i], 0), xytext=(X[i]-0.006,0.035), rotation=90)
 
-		#ax.grid()
 		ax.xaxis.set_major_locator(MultipleLocator(0.1))
 		ax.xaxis.set_minor_locator(AutoMinorLocator(4))
 		ax.grid(which='major', color='#888888', linestyle='--')
@@ -1428,72 +1463,86 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_ycsb_lsm_generic(self, file_suffix: str, stats_name: str, title: str, y_label: str, y_f) -> None:
-		ycsb_data = get_recursive(self._data, 'ycsb[0]')
-		if ycsb_data == None or get_recursive(ycsb_data, 0, 'socket_report', 'rocksdb.cfstats') == None:
-			return
+	def get_lsm_levels(self, container='ycsb[0]'):
+		base_str = f'{container}.socket_report.rocksdb.cfstats.compaction'
+		ret = []
+		df = self.pd_data
+		for i in df.keys():
+			if i.find(base_str) >= 0:
+				r = re.findall(r'\.L([0-9]+)\.SizeBytes', i)
+				if len(r) > 0:
+					ret.append(int(r[0]))
+		ret.sort()
+		return ret
 
-		l_max = -1
-		for t_count in range(0, 10):
-			while get_recursive(ycsb_data, t_count, 'socket_report', 'rocksdb.cfstats', f'compaction.L{l_max +1}.{stats_name}') is not None:
-				l_max += 1
-			for i in range(2, 6):
-				if get_recursive(ycsb_data, t_count, 'socket_report', 'rocksdb.cfstats', f'compaction.L{l_max +i}.{stats_name}'):
-					l_max += i
-		# print(f'l_max = {l_max}')
+	def graph_ycsb_lsm_generic(self, stats_name: str, y_label: str, y_f, **kargs) -> None:
+		level_list = self.get_lsm_levels()
+		l_max = level_list[-1] if len(level_list) > 0 else -1
 		if l_max < 0:
 			return
 
-		X = [x['time']/60.0 for x in self._data['ycsb[0]']]
-		aux = (X[-1] - X[0]) * 0.01
+		args = self.overlap_args(kargs)
+		df = self.pd_data
+
+		x_min, x_max = df['time_min'].min(), df['time_min'].max()
+		aux = (x_max - x_min) * 0.01
 
 		fig, axs = plt.subplots(l_max +1, 1)
-		fig.set_figheight(6)
+		fig.set_figheight(5)
 		fig.set_figwidth(9)
 
-		for l in range(0, l_max +1):
-			ax = axs[l]
+		df_keys = df.keys()
 
-			Y = [y_f(get_recursive(y, 'socket_report', 'rocksdb.cfstats', f'compaction.L{l}.{stats_name}')) for y in ycsb_data]
-			ax.plot(X, Y, '-', lw=1.4, label=f'L{l}')
+		for l in range(0, l_max + 1):
+			ax = axs[l]
+			y_key = f'ycsb[0].socket_report.rocksdb.cfstats.compaction.L{l}.{stats_name}'
+			y_max = 0
+			if y_key in df_keys:
+				Y = [y_f(v) for v in df[y_key]]
+				ax.plot(df['time_min'], Y, '-', lw=1.4, label=f'L{l}')
+				y_max = max(Y)
 
 			ax.set(ylabel=y_label.format(**locals()))
 			if ax != axs[-1]:
 				ax.set(xticklabels=[])
 
-			ax.set_xlim([X[0]-aux,X[-1]+aux])
-			ax.set_ylim([-.01, max(Y) * 1.1])
+			ax.set_xlim([x_min - aux, x_max + aux])
+			try:
+				ax.set_ylim([-.01, y_max * 1.05])
+			except:
+				print(f'ylim exception: y_max={y_max}')
+				ax.set_ylim([-.01, None])
+
 			if l == 0:
-				self.add_at3_ticks(ax, int(X[0]), int(X[-1]))
+				self.add_at3_ticks(ax, int(x_min), int(x_max))
 			self.set_x_ticks(ax)
 
-		axs[0].set(title=title)
+		axs[0].set(title=self.get_graph_title(args, f"LVM-tree stats: {stats_name}"))
 		axs[-1].set(xlabel="time (min)")
 
 		if self._options.save:
+			file_suffix = coalesce(args.get('file_suffix'), stats_name)
 			for f in self._options.formats:
 				save_name = f'{self._filename_without_ext}_graph_lsm_{file_suffix}.{f}'
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_ycsb_lsm_size(self) -> None:
+	def graph_ycsb_lsm_size(self, **kargs) -> None:
 		self.graph_ycsb_lsm_generic(
-			file_suffix='size',
 			stats_name='SizeBytes',
-			title='LSM-tree level sizes',
 			y_label='L{l}\nGiB',
-			y_f=lambda y: float(coalesce(y, 0)) / (1024 ** 3))
+			y_f=lambda y: float(coalesce(y, 0)) / (1024 ** 3),
+			**kargs)
 
-	def graph_ycsb_lsm_details(self) -> None:
+	def graph_ycsb_lsm_details(self, **kargs) -> None:
 		for i in ['CompactedFiles', 'NumFiles', 'ReadMBps', 'Score', 'WriteAmp', 'WriteMBps']:
 			self.graph_ycsb_lsm_generic(
-				file_suffix=i,
 				stats_name=i,
-				title=f'LSM-tree level {i}',
 				y_label=f'L{{l}}',
-				y_f=lambda y: float(coalesce(y, 0)))
+				y_f=lambda y: float(coalesce(y, 0)),
+				**kargs)
 
-	def graph_ycsb_lsm_summary(self) -> None:
+	def graph_ycsb_lsm_summary(self, **kargs) -> None:
 		ycsb_data = get_recursive(self._data, 'ycsb[0]')
 		if ycsb_data == None or get_recursive(ycsb_data, 0, 'socket_report', 'rocksdb.cfstats') == None:
 			return
@@ -1575,7 +1624,7 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_pairgrid(self):
+	def graph_pairgrid(self, **kargs):
 		if self._num_ydbs > 0:
 			first_metrics = {
 				"ycsb[0].ops_per_s": "kv:ops/s",
@@ -1589,6 +1638,8 @@ class File:
 		else:
 			return
 
+		args = self.overlap_args(self._options.args_pairgrid, kargs)
+
 		cols = {
 			**first_metrics,
 			"performancemonitor.disk.iostat.r/s": "disk:r/s", #IOPS
@@ -1600,9 +1651,20 @@ class File:
 			"performancemonitor.disk.iostat.w_await": "disk:w_await",
 		}
 		df = self.pd_data
+		if args.get('w') is not None:
+			if isinstance(args['w'], list):
+				df = df.loc[df['w'].isin(args['w'])]
+			else:
+				df = df.loc[df['w'] == args['w']]
+
+		if args.get('y_vars') is not None:
+			pairgrid_kargs['x_vars'] = [i for i in cols.values()]
+			pairgrid_kargs['y_vars'] = args.get('y_vars')
+		else:
+			pairgrid_kargs['vars'] = [i for i in cols.values()]
 
 		df2 = df.rename(columns=cols)
-		g = sns.PairGrid(df2, vars=[i for i in cols.values()], diag_sharey=False, palette='viridis', **pairgrid_kargs)
+		g = sns.PairGrid(df2, diag_sharey=False, palette='viridis', **pairgrid_kargs)
 		m1 = g.map_upper(sns.scatterplot)
 		m2 = g.map_lower(sns.scatterplot)
 		g.map_diag(sns.ecdfplot)
@@ -1611,6 +1673,8 @@ class File:
 			ax.grid(which='major', color='#888888', linestyle='--')
 			ax.grid(which='minor', color='#CCCCCC', linestyle=':')
 
+		g.axes.flat[0].set_title(self.get_graph_title(args, "Performance Pair Grid"), loc='left')
+
 		fig = g.fig
 		if self._options.save:
 			for f in self._options.formats:
@@ -1618,14 +1682,22 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_pairgrid_kv(self):
+	def graph_pairgrid_kv(self, **kargs):
 		cols = {
 			"ycsb[0].ops_per_s": "ops/s",
 			'performancemonitor.containers.ycsb_0.blkio.serviced/s.Read': 'r/s',
 			'performancemonitor.containers.ycsb_0.blkio.serviced/s.Write': 'w/s',
 		}
 
+		args = self.overlap_args(self._options.args_pairgrid_kv, kargs)
+
 		df = self.pd_data
+		if args.get('w') is not None:
+			if isinstance(args['w'], list):
+				df = df.loc[df['w'].isin(args['w'])]
+			else:
+				df = df.loc[df['w'] == args['w']]
+
 		df2 = df.rename(columns=cols)
 
 		g = sns.PairGrid(df2, hue='w', vars=[v for v in cols.values()], diag_sharey=False, palette='viridis')
@@ -1636,6 +1708,8 @@ class File:
 			ax.grid(which='major', color='#888888', linestyle='--')
 			ax.grid(which='minor', color='#CCCCCC', linestyle=':')
 		g.add_legend()
+
+		g.axes.flat[0].set_title(self.get_graph_title(args, "Performance KV Pair Grid"), loc='left')
 
 		fig = g.fig
 		if self._options.save:
@@ -2066,48 +2140,3 @@ if __name__ == '__main__':
 	#graph_at3_script('at3_script25.pdf', 4, 25)
 	#graph_at3_script('at3_script28.pdf', 4, 28)
 
-	#plotFiles(getFiles('exp_db'), Options(plot_nothing=True, plot_pressure=True, db_mean_interval=2, pressure_decreased=False))
-
-	#plotFiles(getFiles('exp_at3'), Options(plot_at3_write_ratio=True))
-	#plotFiles(getFiles('exp_at3_rww'), Options(graphTickMajor=2, graphTickMinor=4, plot_io_norm=True))
-
-	#options = Options(graphTickMajor=10, graphTickMinor=4)
-	#plotFiles(["dbbench_mw2.out"], options)
-
-	#Options.file_start_time['exp_db/ycsb_wa.out'] = 30
-	#Options.file_start_time['exp_db/ycsb_wb.out'] = 30
-	#Options.file_start_time['exp_db/dbbench_wwr.out'] = 30
-	#Options.db_xlim = [-0.01,     60.01]
-	#Options.db_ylim = [ 0   , 125000   ]
-	#plotFiles(getFiles('exp_db'), Options(plot_nothing=True, plot_pressure=True, plot_db=True, db_mean_interval=2))
-	##f = File('exp_db2/ycsb_wb.out', Options(plot_nothing=True, plot_db=True, db_mean_interval=2)); f.graph_all()
-	#a = AllFiles()
-	#f = File('exp_db/ycsb_wb,at3_bs64_directio.out', Options(plot_nothing=True, plot_db=True, db_mean_interval=2), a); f.graph_all()
-	#f = File('exp_db/ycsb_wb,at3_bs128_directio.out', Options(plot_nothing=True, plot_db=True, db_mean_interval=2), a); f.graph_all()
-	#a.plot_dbmean()
-
-	#plotFiles(getFiles('exp_dbbench/rrwr'), Options(plot_nothing=True, plot_db=True, db_mean_interval=5))
-
-	#f = File('exp_fill_levels/ycsb_workloada,round03.out', Options(plot_nothing=True, plot_ycsb_lsm_size=True, db_mean_interval=2)); f.graph_all()
-	#f = File('exp_db_levels/ycsb_workloada.out', Options(plot_nothing=True, plot_ycsb_lsm_size=True, plot_db=True, db_mean_interval=2)); f.graph_all()
-	#f = File('exp_db_perfmon/ycsb_workloadb,at3_bs512_directio.out', Options(plot_nothing=True, plot_containers_io=True, plot_io=True, plot_db=False, db_mean_interval=2)); f.graph_all()
-	#f = File('exp_db/dbbench_wwr,at3_bs512_directio.out', Options(use_at3_counters=True))
-	#f = File('dbbench_wwr.out', Options(plot_pressure=True, db_mean_interval=2)); f.graph_all()
-	#f = File('exp_db/ycsb_wa,at3_bs32_directio.out', Options(plot_nothing=True, plot_pressure=True, db_mean_interval=2, pressure_decreased=False)); f.graph_all()
-	#f = File('exp_db/ycsb_wb,at3_bs32_directio.out', Options(plot_pressure=True, db_mean_interval=2)); f.graph_all()
-	#f = File('ycsb_wb,at3_bs32_directio.out', Options(plot_pressure=True, db_mean_interval=2)); f.graph_all()
-	#f = File('ycsb_workloadb_threads5.out', Options(plot_pressure=True, db_mean_interval=2)); f.graph_all()
-	#f = File('ycsb_workloada_threads5.out', Options(plot_pressure=True, db_mean_interval=2)); f.graph_all()
-
-	#f = File('exp_db5min/ycsb_workloadb.out', Options(plot_pressure=True, graphTickMajor=10, graphTickMinor=4, plot_db_mean_interval=5))
-	#f = File('ycsb_workloadb_threads5.out', Options())
-	#f = File('ycsb_workloadb_threads8.out', Options())
-	#p = f.getPressureData()
-	#f.graph_pressure()
-	#f.graph_at3_script()
-	#f.graph_db()
-	#f.graph_all()
-
-	#fiofiles = FioFiles(getFiles('exp_fio'), Options(fio_folder='exp_fio'))
-	#fiofiles.graph_bw()
-	#fiofiles.graph_iops()
