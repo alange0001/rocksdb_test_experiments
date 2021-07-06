@@ -52,6 +52,7 @@ class Options:
 	plot_pressure = False
 	args_pressure = dict()
 	plot_containers_io = True
+	plot_ycsb_lsm_stats = True
 	plot_ycsb_lsm_size = True
 	plot_ycsb_lsm_details = True
 	plot_ycsb_lsm_summary = True
@@ -1475,6 +1476,82 @@ class File:
 		ret.sort()
 		return ret
 
+	def graph_ycsb_lsm_stats(self, **kargs):
+		level_list = self.get_lsm_levels()
+		l_max = level_list[-1] if len(level_list) > 0 else -1
+		if l_max < 0:
+			return
+
+		args = self.overlap_args(kargs)
+		df = self.pd_data
+
+		x_min, x_max = df['time_min'].min(), df['time_min'].max()
+		aux = (x_max - x_min) * 0.01
+
+		ax_space = 2
+		fig = plt.figure()
+		gs = fig.add_gridspec((l_max + 1) * 2 + ax_space, 2, hspace=0.0, wspace=0.2)
+		axs = gs.subplots()
+		fig.suptitle(self.get_graph_title(args, "LSM-tree stats"), y=1.0)
+		fig.set_figheight(9)
+		fig.set_figwidth(14)
+
+		graphs = [
+			{'stat_name': 'SizeBytes',
+			 'axs': [axs[i, 0] for i in range(0, l_max + 1)],
+			 'scale': 1024.0 ** 3,
+			 'title': 'Size (GiB)'},
+			{'stat_name': 'Score',
+			 'axs': [axs[i, 0] for i in range(l_max+1+ax_space, (l_max + 1) * 2 + ax_space)],
+			 'scale': 1},
+			{'stat_name': 'NumFiles',
+			 'axs': [axs[i, 1] for i in range(0, l_max + 1)],
+			 'scale': 1},
+			{'stat_name': 'CompactedFiles',
+			 'axs': [axs[i, 1] for i in range(l_max+1+ax_space, (l_max + 1) * 2 + ax_space)],
+			 'scale': 1},
+		]
+		for i in range(1, ax_space+1):
+			fig.delaxes(axs[l_max + i, 0])
+			fig.delaxes(axs[l_max + i, 1])
+
+		df_keys = df.keys()
+
+		for l in range(0, l_max + 1):
+			for g in graphs:
+				ax = g['axs'][l]
+				y_key = f'ycsb[0].socket_report.rocksdb.cfstats.compaction.L{l}.{g["stat_name"]}'
+				if y_key in df_keys:
+					Y = [v / g['scale'] for v in df[y_key]]
+					ax.plot(df['time_min'], Y, '-', lw=1.4)
+
+				if l == 0:
+					ax.set(title=g['stat_name'] if g.get('title') is None else g['title'])
+				elif l < l_max:
+					ax.sharex(g['axs'][l_max])
+				elif l == l_max:
+					ax.set_xlim([x_min - aux, x_max + aux])
+					self.set_x_ticks(ax)
+					ax.tick_params(axis='x', which='both', bottom=True)
+					ax.set_xlabel('time (min)', labelpad=1.0)
+				ax.set_ylabel(f'L{l}', labelpad=4.5)
+				ax.set_ylim([-0.1, None])
+
+		for g in graphs:
+			for l in range(0,l_max):
+				ax = g['axs'][l]
+				ax.tick_params(axis='x', labelbottom=False)
+				ax.grid(which='major', color='#CCCCCC', linestyle='--')
+				ax.grid(which='minor', color='#CCCCCC', linestyle=':')
+
+			self.add_at3_ticks(g['axs'][0], int(x_min), int(x_max))
+
+		if self._options.save:
+			for f in self._options.formats:
+				save_name = f'{self._filename_without_ext}_graph_lsm.{f}'
+				fig.savefig(save_name, bbox_inches="tight")
+		plt.show()
+
 	def graph_ycsb_lsm_generic(self, stats_name: str, y_label: str, y_f, **kargs) -> None:
 		level_list = self.get_lsm_levels()
 		l_max = level_list[-1] if len(level_list) > 0 else -1
@@ -1758,6 +1835,9 @@ class File:
 		if self._options.plot_containers_io:
 			print(f'Containers I/O: {description}')
 			self.graph_containers_io()
+		if self._options.plot_ycsb_lsm_stats:
+			print(f'LSM-tree stats: {description}')
+			self.graph_ycsb_lsm_stats()
 		if self._options.plot_ycsb_lsm_size:
 			print(f'LSM-tree level sizes: {description}')
 			self.graph_ycsb_lsm_size()
