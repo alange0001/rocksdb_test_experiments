@@ -1464,7 +1464,13 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
+	_get_lsm_levels = None
 	def get_lsm_levels(self, container='ycsb[0]'):
+		if self._get_lsm_levels is None:
+			self._get_lsm_levels = dict()
+		if self._get_lsm_levels.get(container) is not None:
+			return self._get_lsm_levels.get(container)
+
 		base_str = f'{container}.socket_report.rocksdb.cfstats.compaction'
 		ret = []
 		df = self.pd_data
@@ -1474,6 +1480,7 @@ class File:
 				if len(r) > 0:
 					ret.append(int(r[0]))
 		ret.sort()
+		self._get_lsm_levels[container] = ret
 		return ret
 
 	def graph_ycsb_lsm_stats(self, **kargs):
@@ -1708,10 +1715,8 @@ class File:
 				'performancemonitor.containers.ycsb_0.blkio.serviced/s.Read': 'kv:r/s',
 				'performancemonitor.containers.ycsb_0.blkio.serviced/s.Write': 'kv:w/s',
 			}
-			pairgrid_kargs = {'hue':'w'}
 		elif self._num_at > 0:
 			first_metrics = {"access_time3[0].iodepth": "iodepth"}
-			pairgrid_kargs = {}
 		else:
 			return
 
@@ -1728,6 +1733,11 @@ class File:
 			"performancemonitor.disk.iostat.w_await": "disk:w_await",
 		}
 		df = self.pd_data
+		pairgrid_kargs = {}
+		if args.get('hue') is not None:
+			pairgrid_kargs['hue'] = args['hue']
+		elif 'w' in df.keys():
+			pairgrid_kargs['hue'] = 'w'
 		if args.get('w') is not None:
 			if isinstance(args['w'], list):
 				df = df.loc[df['w'].isin(args['w'])]
@@ -1769,6 +1779,11 @@ class File:
 		args = self.overlap_args(self._options.args_pairgrid_kv, kargs)
 
 		df = self.pd_data
+		pairgrid_kargs = {}
+		if args.get('hue') is not None:
+			pairgrid_kargs['hue'] = args['hue']
+		elif 'w' in df.keys():
+			pairgrid_kargs['hue'] = 'w'
 		if args.get('w') is not None:
 			if isinstance(args['w'], list):
 				df = df.loc[df['w'].isin(args['w'])]
@@ -1777,7 +1792,7 @@ class File:
 
 		df2 = df.rename(columns=cols)
 
-		g = sns.PairGrid(df2, hue='w', vars=[v for v in cols.values()], diag_sharey=False, palette='viridis')
+		g = sns.PairGrid(df2, vars=[v for v in cols.values()], diag_sharey=False, palette='viridis', **pairgrid_kargs)
 		m1 = g.map_upper(sns.scatterplot)
 		m2 = g.map_lower(sns.kdeplot)
 		g.map_diag(sns.ecdfplot)
