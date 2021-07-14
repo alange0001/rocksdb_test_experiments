@@ -69,8 +69,6 @@ class Options:
 	all_pressure_label = None
 
 	def __init__(self, **kargs):
-		if self.file_start_time is None:
-			self.file_start_time = {}
 		self._process_args(kargs)
 
 	def __call__(self, **kargs):
@@ -80,6 +78,7 @@ class Options:
 
 	def _process_args(self, args: dict) -> None:
 		deprecated = {
+			'file_start_time': 'parameter is no longer supported',
 			'db_mean_interval': 'use args_db["mean_interval"] instead',
 			'pressure_decreased': 'use args_pressure["mark_decreased"] instead',
 			'print_pressure_values': 'use args_pressure["print_values"] instead',
@@ -217,9 +216,12 @@ class AllFiles:
 		if self._file_pressures is not None:
 			return self._file_pressures
 
-		self._file_pressures = []
+		ret = []
 		for f in self._file_objs:
-			self._file_pressures.append(f.pressure_data)
+			pdata = f.pressure_data
+			if pdata is not None:
+				ret.append(f.pressure_data)
+		self._file_pressures = ret
 		return self._file_pressures
 
 	def graph_pressure(self) -> None:
@@ -500,6 +502,7 @@ class File:
 			#	print(k, ":", v)
 		return self._w_list
 
+	# TODO deprecated
 	def last_at3(self, time):
 		if self._num_at <= 0 or self.w_list is None:
 			return None
@@ -511,34 +514,39 @@ class File:
 			last_w = w
 		return last_w
 
-	def get_at3_ticks(self, Xmin, Xmax):
-		# print(f'\nDEBUG: get_at3_ticks{Xmin, Xmax}')
-		ticks, labels = [], []
-		if self.w_list is not None:
-			for w in self.w_list.values():
-				w_time = int(w['time']/60)
-				if w_time < Xmin:
-					continue
-				if w_time > Xmax:
-					break
-				ticks.append(w_time)
-				labels.append(w['latex_name'])
-		return ticks, labels
+	def add_upper_ticks(self, ax, x_min, x_max, args):
+		if args is None: args = dict()
+		key = None
+		if args.get('ycsb_tag') is not None:
+			key = f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}'
+		elif self._options.at3_ticks and self._num_at > 0:
+			key = 'w_name'
 
-	def add_at3_ticks(self, ax, Xmin, Xmax):
-		if self._options.at3_ticks and self._num_at > 0:
-			X2_ticks, X2_labels = self.get_at3_ticks(Xmin, Xmax)
-			if 'twin' in dir(ax):
-				ax2 = ax.twin()
-				ax2.axis["right"].major_ticklabels.set_visible(False)
-				ax2.axis["top"].major_ticklabels.set_visible(True)
+		if key is not None:
+			if key in self.pd_data.keys():
+				df1 = self.pd_data
+				if x_min is not None:
+					df1 = df1.loc[df1['time_min'] >= x_min]
+				if x_max is not None:
+					df1 = df1.loc[df1['time_min'] <= x_max]
+				df = df1.groupby([key]).agg({'time_min': 'min'}).sort_values('time_min')
+				x2_ticks = [i[0] for i in df.values]
+				x2_labels = [i for i in df.index]
+
+				if 'twin' in dir(ax):
+					ax2 = ax.twin()
+					ax2.axis["right"].major_ticklabels.set_visible(False)
+					ax2.axis["top"].major_ticklabels.set_visible(True)
+				else:
+					ax2 = ax.twiny()
+
+				ax2.set_xticks(x2_ticks)
+				ax2.set_xticklabels(x2_labels, rotation=0)
+				ax2.set_xlim(ax.get_xlim())  # ax.set_xlim() must be set before
+				return ax2
 			else:
-				ax2 = ax.twiny()
+				print(f"ERROR: {k} not found in pd_data in file {self.filename}")
 
-			ax2.set_xticks(X2_ticks)
-			ax2.set_xticklabels(X2_labels, rotation=90)
-			ax2.set_xlim(ax.get_xlim()) # ax.set_xlim() must be set before
-			return ax2
 		return None
 
 	def get_mean(self, X, Y, interval):
@@ -654,14 +662,6 @@ class File:
 			return try_convert(value, float)
 		return value
 
-	def cut_begin(self, X, Y, start):
-		retX, retY = [], []
-		for i in range(len(X)):
-			if X[i] >= start:
-				retX.append(X[i] - start)
-				retY.append(Y[i])
-		return (retX, retY)
-
 	def get_graph_title(self, args, graph_default):
 		if args.get('title') is None:
 			return None
@@ -695,10 +695,7 @@ class File:
 			X = [i['time']/60.0 for i in self._data[f'db_bench[{i}]']]
 			Y = [i['ops_per_s'] for i in self._data[f'db_bench[{i}]']]
 
-			if self._options.file_start_time is not None and self._options.file_start_time.get(self._filename) is not None:
-				Xplot, Yplot = self.cut_begin(X, Y, self._options.file_start_time.get(self._filename))
-			else:
-				Xplot, Yplot = X, Y
+			Xplot, Yplot = X, Y
 			Xmin = min([Xmin, min(Xplot)])
 			Xmax = max([Xmax, max(Xplot)])
 			Ymax = max([Ymax, max(Yplot)])
@@ -710,10 +707,7 @@ class File:
 				sine_c = coalesce(self._dbbench[i]['sine_c'], 0)
 				sine_d = coalesce(self._dbbench[i]['sine_d'], 0)
 				Y = [ sine_a * math.sin(sine_b * x + sine_c) + sine_d for x in X]
-				if self._options.file_start_time is not None and self._options.file_start_time.get(self._filename) is not None:
-					Xplot, Yplot = self.cut_begin(X, Y, self._options.file_start_time.get(self._filename))
-				else:
-					Xplot, Yplot = X, Y
+				Xplot, Yplot = X, Y
 				ax.plot(Xplot, Yplot, '-', lw=1, label=f'db_bench (expected)')
 
 			if args.get('mean_interval') is not None:
@@ -721,7 +715,7 @@ class File:
 				ax.plot(X, Y, '-', lw=1, label=f'db_bench mean')
 			elif self._num_at > 0:
 				df = self.pd_data.groupby(['w_name']).agg(
-					{'time_min': 'mean', 'db_bench[0].ops_per_s': 'mean'}
+					{'time_min': 'mean', f'db_bench[{i}].ops_per_s': 'mean'}
 					).sort_values('time_min')
 				sns.lineplot(ax=ax, x='time_min', y='db_bench[0].ops_per_s', data=df)
 
@@ -733,10 +727,7 @@ class File:
 				i_label = i
 			X = [i['time']/60.0 for i in self._data[f'ycsb[{i}]']]
 			Y = [i['ops_per_s'] for i in self._data[f'ycsb[{i}]']]
-			if self._options.file_start_time is not None and self._options.file_start_time.get(self._filename) is not None:
-				Xplot, Yplot = self.cut_begin(X, Y, self._options.file_start_time.get(self._filename))
-			else:
-				Xplot, Yplot = X, Y
+			Xplot, Yplot = X, Y
 			Xmin = min([Xmin, min(Xplot)])
 			Xmax = max([Xmax, max(Xplot)])
 			Ymax = max([Ymax, max(Yplot)])
@@ -747,7 +738,7 @@ class File:
 				ax.plot(X, Y, '-', lw=1, label=f'ycsb {i_label} mean')
 			elif self._num_at > 0:
 				df = self.pd_data.groupby(['w_name']).agg(
-					{'time_min': 'mean', 'ycsb[0].ops_per_s': 'mean'}
+					{'time_min': 'mean', f'ycsb[{i}].ops_per_s': 'mean'}
 					).sort_values('time_min')
 				sns.lineplot(ax=ax, x='time_min', y='ycsb[0].ops_per_s', data=df)
 
@@ -761,12 +752,7 @@ class File:
 
 		self.set_x_ticks(ax)
 
-		if not(self._options.file_start_time is not None and self._options.file_start_time.get(self._filename) is not None):
-			self.add_at3_ticks(ax, int(Xmin), int(Xmax))
-			if allfiles_d is not None:
-				X2_ticks, X2_labels = self.get_at3_ticks(int(Xmin), int(Xmax))
-				allfiles_d['W_ticks'] = X2_ticks
-				allfiles_d['W_labels'] = X2_labels
+		self.add_upper_ticks(ax, int(Xmin), int(Xmax), args)
 
 		ax.set(xlabel="time (min)", ylabel="tx/s")
 		ax.set(title=self.get_graph_title(args, "Key-Value Store's Performance"))
@@ -782,13 +768,15 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_io(self):
-		self.graph_io_new()
+	def graph_io(self, **kargs):
+		self.graph_io_new(**kargs)
 		self.graph_io_old()
 
-	def graph_io_new(self):
+	def graph_io_new(self, **kargs):
 		if self._data.get('performancemonitor') is None:
 			return
+
+		args = self.overlap_args(kargs)
 
 		X = [x['time']/60.0 for x in self._data['performancemonitor']]
 
@@ -835,7 +823,7 @@ class File:
 			aux = (X[-1] - X[0]) * 0.01
 			ax.set_xlim([X[0]-aux,X[-1]+aux])
 			if ax_i == 0:
-				self.add_at3_ticks(ax, int(X[0]), int(X[-1]))
+				self.add_upper_ticks(ax, int(X[0]), int(X[-1]), args)
 
 			self.set_x_ticks(ax)
 
@@ -954,11 +942,11 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_cpu(self):
-		self.graph_cpu_new()
+	def graph_cpu(self, **kargs):
+		self.graph_cpu_new(**kargs)
 		self.graph_cpu_old()
 
-	def graph_cpu_new(self):
+	def graph_cpu_new(self, **kargs):
 		if 'performancemonitor' not in self._data.keys(): return
 
 		def sum_active(percents):
@@ -967,6 +955,8 @@ class File:
 				if k not in ('idle', 'iowait', 'steal'):
 					s += v
 			return s
+
+		args = self.overlap_args(kargs)
 
 		fig, axs = plt.subplots(2, 1)
 		fig.set_figheight(4)
@@ -998,7 +988,7 @@ class File:
 
 		axs[0].legend(loc='upper right', ncol=2, frameon=True)
 
-		self.add_at3_ticks(axs[0], int(X[0]), int(X[-1]))
+		self.add_upper_ticks(axs[0], int(X[0]), int(X[-1]), args)
 
 		if self._options.save:
 			for f in self._options.formats:
@@ -1051,10 +1041,12 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_at3(self):
+	def graph_at3(self, **kargs):
 		if self._num_at == 0 or self._num_at is None:
 			return
 		#print(f'graph_at3() filename: {self._filename}')
+
+		args = self.overlap_args(kargs)
 
 		fig, axs = plt.subplots(self._num_at, 1)
 		fig.set_figheight(5)
@@ -1088,7 +1080,7 @@ class File:
 			aux = (X[-1] - X[0]) * 0.01
 			ax.set_xlim([X[0]-aux, X[-1]+aux])
 			if i == 0:
-				self.add_at3_ticks(ax, int(X[0]), int(X[-1]))
+				self.add_upper_ticks(ax, int(X[0]), int(X[-1]), args)
 
 			self.set_x_ticks(ax)
 
@@ -1107,9 +1099,11 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_at3_script(self):
+	def graph_at3_script(self, **kargs):
 		if self._num_at == 0 or self._num_at is None:
 			return
+
+		args = self.overlap_args(kargs)
 
 		fig, axs = plt.subplots(self._num_at, 1)
 		fig.set_figheight(5)
@@ -1147,7 +1141,7 @@ class File:
 			self.set_x_ticks(ax)
 			ax.set(**ax_set)
 
-		self.add_at3_ticks(ax0, int(X[0]), int(X[-1]))
+		self.add_upper_ticks(ax0, int(X[0]), int(X[-1]), args)
 
 		plt.subplots_adjust(hspace=0.1)
 
@@ -1391,9 +1385,11 @@ class File:
 				print(f'WARNING: container name "{n}" without pattern')
 		return ret
 
-	def graph_containers_io(self):
+	def graph_containers_io(self, **kargs):
 		perfmon_data = self._data.get('performancemonitor')
 		if perfmon_data is None: return
+
+		args = self.overlap_args(kargs)
 
 		containers_map = self.map_container_names()
 		#print(f'containers_map: {containers_map}')
@@ -1456,7 +1452,7 @@ class File:
 		axs[0].set(title="Containers I/O")
 		axs[-1].set(xlabel="time (min)")
 
-		self.add_at3_ticks(axs[0], int(X[0]), int(X[-1]))
+		self.add_upper_ticks(axs[0], int(X[0]), int(X[-1]), args)
 
 		if self._options.save:
 			for f in self._options.formats:
@@ -1534,7 +1530,7 @@ class File:
 
 				if l == 0:
 					ax.set(title=g['stat_name'] if g.get('title') is None else g['title'])
-				elif l < l_max:
+				if l < l_max:
 					ax.sharex(g['axs'][l_max])
 				elif l == l_max:
 					ax.set_xlim([x_min - aux, x_max + aux])
@@ -1551,7 +1547,8 @@ class File:
 				ax.grid(which='major', color='#CCCCCC', linestyle='--')
 				ax.grid(which='minor', color='#CCCCCC', linestyle=':')
 
-			self.add_at3_ticks(g['axs'][0], int(x_min), int(x_max))
+			#self.add_upper_ticks(g['axs'][0], int(x_min), int(x_max), args)
+			self.add_upper_ticks(g['axs'][0], None, None, args)
 
 		if self._options.save:
 			for f in self._options.formats:
@@ -1598,7 +1595,7 @@ class File:
 				ax.set_ylim([-.01, None])
 
 			if l == 0:
-				self.add_at3_ticks(ax, int(x_min), int(x_max))
+				self.add_upper_ticks(ax, int(x_min), int(x_max), args)
 			self.set_x_ticks(ax)
 
 		axs[0].set(title=self.get_graph_title(args, f"LVM-tree stats: {stats_name}"))
@@ -1630,6 +1627,8 @@ class File:
 		ycsb_data = get_recursive(self._data, 'ycsb[0]')
 		if ycsb_data == None or get_recursive(ycsb_data, 0, 'socket_report', 'rocksdb.cfstats') == None:
 			return
+
+		args = self.overlap_args(kargs)
 
 		X = [x['time']/60.0 for x in self._data['ycsb[0]']]
 		aux = (X[-1] - X[0]) * 0.01
@@ -1664,7 +1663,7 @@ class File:
 		axs[0].set(title='LSM-tree stats summary')
 		axs[-1].set(xlabel="time (min)")
 
-		self.add_at3_ticks(axs[0], int(X[0]), int(X[-1]))
+		self.add_upper_ticks(axs[0], int(X[0]), int(X[-1]), args)
 
 		if self._options.save:
 			for f in self._options.formats:
@@ -1672,12 +1671,14 @@ class File:
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
 
-	def graph_smart_utilization(self):
+	def graph_smart_utilization(self, **kargs):
 		perfmon_data = get_recursive(self._data, 'performancemonitor')
 		if perfmon_data == None:
 			return
 		if get_recursive(perfmon_data, 0, 'smart', 'capacity') == None or get_recursive(perfmon_data, 0, 'smart', 'utilization') == None:
 			return
+
+		args = self.overlap_args(kargs)
 
 		fig, axs = plt.subplots(1, 1)
 		fig.set_figheight(2)
@@ -1697,7 +1698,7 @@ class File:
 
 		aux = (X[-1] - X[0]) * 0.01
 		ax.set_xlim([X[0]-aux,X[-1]+aux])
-		self.add_at3_ticks(ax, int(X[0]), int(X[-1]))
+		self.add_upper_ticks(ax, int(X[0]), int(X[-1]), args)
 
 		self.set_x_ticks(ax)
 		ax.set_ylim([-1, 105])
@@ -1732,11 +1733,12 @@ class File:
 			"performancemonitor.disk.iostat.r_await": "disk:r_await",
 			"performancemonitor.disk.iostat.w_await": "disk:w_await",
 		}
+
 		df = self.pd_data
 		pairgrid_kargs = {}
 		if args.get('hue') is not None:
 			pairgrid_kargs['hue'] = args['hue']
-		elif 'w' in df.keys():
+		elif 'w' in df.keys() and df['w'].count() > 0:
 			pairgrid_kargs['hue'] = 'w'
 		if args.get('w') is not None:
 			if isinstance(args['w'], list):
@@ -1782,7 +1784,7 @@ class File:
 		pairgrid_kargs = {}
 		if args.get('hue') is not None:
 			pairgrid_kargs['hue'] = args['hue']
-		elif 'w' in df.keys():
+		elif 'w' in df.keys() and df['w'].count() > 0:
 			pairgrid_kargs['hue'] = 'w'
 		if args.get('w') is not None:
 			if isinstance(args['w'], list):
