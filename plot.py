@@ -406,6 +406,21 @@ class File:
 			print('{:<20s}: {}'.format(k, v))
 		print()
 
+	def print_ycsb_commands(self):
+		group_keys = [
+			'ycsb[0].socket_report.last_command_count',
+			'ycsb[0].socket_report.last_command',
+			'ycsb[0].socket_report.last_command_status',
+			]
+		df = self.pd_data
+		for k in group_keys:
+			if k not in df.keys():
+				print(f'ERROR: key {k} not found in file {self.filename}')
+				return
+		df2 = df.groupby(group_keys).agg({'time_min': 'min'}).sort_values('time_min')
+		print('ycsb[0] commands:')
+		print(df2.to_csv())
+
 	def load_at3(self):
 		file_id = DB.getFileId()
 		self._file_id = file_id
