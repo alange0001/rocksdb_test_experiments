@@ -560,7 +560,7 @@ class File:
 				ax2.set_xlim(ax.get_xlim())  # ax.set_xlim() must be set before
 				return ax2
 			else:
-				print(f"ERROR: {k} not found in pd_data in file {self.filename}")
+				print(f"ERROR: {key} not found in pd_data in file {self.filename}")
 
 		return None
 
