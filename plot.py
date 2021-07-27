@@ -37,6 +37,7 @@ class Options:
 	graphTickMajor = 5
 	graphTickMinor = 5
 	args_global = {'title': 'default+filename'}
+	after_pd_data = None
 	plot_db = True
 	args_db = dict()
 	db_xlim = None
@@ -668,6 +669,8 @@ class File:
 			ret['w_name'] = [None for _ in range(len(ret))]
 
 		self._pd_data = ret
+		if self._options.after_pd_data is not None:
+			self._options.after_pd_data(self)
 		return ret
 
 	def _pd_data_convert(self, key, value):
@@ -1685,6 +1688,65 @@ class File:
 				save_name = f'{self._filename_without_ext}_graph_lsm_summary.{f}'
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
+
+	facet_templates = {
+		'kv performance': dict(kwargs=dict(title_default='KV Performance'),
+		                       func=sns.ecdfplot),
+		'compacted files': dict(kwargs=dict(title_default='Compacted Files'),
+		                        func=sns.histplot,
+		                        func_args=dict(x='ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles')),
+		'kv x compacted': dict(kwargs=dict(title_default='KV Performance X Compacted Files'),
+		                       func=sns.scatterplot,
+		                       func_args=dict(x='ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles',
+		                                      y='ycsb[0].ops_per_s',
+		                                      alpha=0.4)),
+	}
+
+	def graph_facet(self,
+	                template=dict(),
+	                facet_args=dict(),
+	                func=None,
+	                func_args=dict(),
+	                **kwargs):
+		if isinstance(template, str):
+			template_args = self.facet_templates.get(template)
+			if template_args is None:
+				print(f'ERROR: template "{template}" not found')
+				return None
+		elif isinstance(template, dict):
+			template_args = template
+		elif template is None:
+			template_args = dict()
+		else:
+			print(f'ERROR: invalid graph_facet template')
+			return None
+		facet_args = {'col': 'w_name', 'palette': 'prism',
+		              **coalesce(template_args.get('facet_args'), dict()),
+		              **facet_args}
+		func_args = {'x': 'ycsb[0].ops_per_s',
+		             **coalesce(template_args.get('func_args'), dict()),
+		             **func_args}
+
+		func = coalesce(func, template_args.get('func'), sns.ecdfplot)
+
+		data_keys = self.pd_data.keys()
+		for k in [facet_args.get(i) for i in ['row', 'col', 'hue']] + [func_args.get(i) for i in ['x', 'y']]:
+			if k is not None and k not in data_keys:
+				print(f'ERROR: key "{k}" not found in pd_data')
+				return None
+
+		args = {'title_default': f'Facet Graph ({func_args.get("x")})',
+		        **coalesce(template_args.get('kwargs'), dict()),
+		        **(self.overlap_args(kwargs))}
+
+		sns.set_theme(style="ticks")
+		g = sns.FacetGrid(self.pd_data, **facet_args)
+		g.map_dataframe(func, **func_args)
+		g.add_legend()
+		g.fig.suptitle(self.get_graph_title(args, args.get('title_default')), y=1.2)
+		g.set_titles(col_template='{col_name}')
+		g.fig.set_figheight(2)
+		return g
 
 	def graph_smart_utilization(self, **kargs):
 		perfmon_data = get_recursive(self._data, 'performancemonitor')
