@@ -700,6 +700,27 @@ class File:
 			return try_convert(value, float)
 		return value
 
+	def tag_quantiles(self):
+		df = self.pd_data
+		keys = df.keys()
+		if 'w_name' not in keys:
+			print('ERROR: column w_name not found')
+			return
+		for colname, newcolumn in [
+			('ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles', 'quantile_compact'),
+			('ycsb[0].ops_per_s', 'quantile_ops')
+		]:
+			if colname not in keys:
+				print(f'WARN: column "{colname}" not found')
+				continue
+			for w in pd.unique(df['w_name']):
+				df2 = df.loc[df['w_name'] == w, colname]
+				df.loc[df['w_name'] == w, newcolumn] = \
+					[0.25 if r < 0.26 else \
+					 0.5 if r < 0.51 else \
+					 0.75 if r < 0.76 else \
+					 1.0 for r in df2.rank(pct=True)]
+
 	def get_graph_title(self, args, graph_default):
 		if args.get('title') is None:
 			return None
