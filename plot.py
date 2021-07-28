@@ -28,10 +28,11 @@ import seaborn as sns
 sns.set()
 sns.set_style('white')
 
+
 class Options:
 	formats = ['png', 'pdf']
 	print_params = False
-	file_description = None
+	file_description = None  # str or callable f(obj : File) -> str
 	save = False
 	savePlotData = False
 	graphTickMajor = 5
@@ -67,7 +68,8 @@ class Options:
 	fio_folder = None
 	plot_all_dbmean = True
 	plot_all_pressure = True
-	all_pressure_label = None
+	all_pressure_label = None  # callable f(obj : File) -> str
+	file_label = None  # callable f(obj : File) -> str
 
 	def __init__(self, **kargs):
 		self._process_args(kargs)
@@ -170,6 +172,24 @@ class AllFiles:
 	def check_options(self, options):
 		if self._options is None:
 			self._options = options
+
+	_pd_data = None
+	@property
+	def pd_data(self):
+		if self._pd_data is not None:
+			return self._pd_data
+
+		df_list = []
+		for f in self._file_objs:
+			df = f.pd_data
+			if callable(self._options.file_label):
+				df['af_name'] = self._options.file_label(f)
+			else:
+				df['af_name'] = f.filename
+			df_list.append(df)
+
+		self._pd_data = pd.concat(df_list, ignore_index=True)
+		return self._pd_data
 
 	def graph_all(self):
 		for i in range(0, len(self._file_list)):
