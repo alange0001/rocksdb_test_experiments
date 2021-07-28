@@ -736,6 +736,37 @@ class File:
 			return f'{graph_default}\n{self.filename}'
 		return args.get('title') if isinstance(args.get('title'), str) else '(unknown type)'
 
+	def get_file_label(self, label_items=['workload']):
+		ret = []
+		for i in label_items:
+			if i == 'workload' and self._params['num_ydbs'] > 0:
+				ret.append('YCSB:' + self._params['ydb_workload[0]'][-1].upper())
+			elif i == 'device':
+				aux = get_recursive(self._data, 'performancemonitor', 0, 'smart', 'model')
+				if aux is not None:
+					aux = aux.replace('Samsung SSD ', 'S')
+					aux = aux.replace(' PRO ', 'P')
+					aux = aux.replace(' EVO ', 'E')
+					aux = aux.replace('Plus ', '+')
+					aux = aux.replace('GB', '')
+					ret.append(aux)
+			elif i == 'device_auto':
+				r = re.findall(r'/auto/([^/]+)', self._params['ydb_path[0]'])
+				if len(r) > 0:
+					ret.append(f'{r[0]}')
+			elif i == 'kernel':
+				sinfo = get_recursive(self._data, 'performancemonitor', 0, 'system_info')
+				if sinfo is not None:
+					r = re.findall(r'([0-9]+\.[0-9]+)', sinfo)
+					if len(r) > 0: ret.append(f'K{r[0]}')
+			else:
+				print(f'ERROR: invalid label item "{i}"')
+		return ','.join(ret)
+
+	@classmethod
+	def file_label_f(cls, label_items=['workload', 'device', 'kernel']):
+		return lambda self: self.get_file_label(label_items)
+
 	def graph_db(self, **kargs):
 		num_dbbench, num_ycsb = self.count_dbs()
 		if num_dbbench == 0 and num_ycsb == 0:
