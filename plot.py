@@ -685,8 +685,8 @@ class File:
 			ret['w']      = w_num
 			ret['w_name'] = w_name
 		else:
-			ret['w']      = [None for _ in range(len(ret))]
-			ret['w_name'] = [None for _ in range(len(ret))]
+			ret['w']      = [0    for _ in range(len(ret))]
+			ret['w_name'] = ['w0' for _ in range(len(ret))]
 
 		self._pd_data = ret
 		if self._options.after_pd_data is not None:
