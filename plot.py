@@ -1818,7 +1818,12 @@ class File:
 		g.fig.suptitle(self.get_graph_title(args, args.get('title_default')), y=1.2)
 		g.set_titles(col_template='{col_name}')
 		g.fig.set_figheight(2)
-		return g
+		
+		if self._options.save:
+			for f in self._options.formats:
+				save_name = f'{self._filename_without_ext}_graph_facet.{f}'
+				fig.savefig(save_name, bbox_inches="tight")
+		plt.show()
 
 	def graph_smart_utilization(self, **kargs):
 		perfmon_data = get_recursive(self._data, 'performancemonitor')
