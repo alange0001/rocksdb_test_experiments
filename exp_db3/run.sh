@@ -136,7 +136,7 @@ at_interval=${at_interval:-2}
 at_block_size_list=${at_block_size_list:-4 8 16 32 64 128 256 512}
 at_o_dsync=${at_o_dsync:-true}
 at_random_ratio=${at_random_ratio:-0.5}
-[ "$change_rocksdb_jni" == 1 ] && param_rocksdb_jni="--ydb_rocksdb_jni=$HOME/workspace/dr/rocksdb_test/3rd-party/rocksdb/java/target/rocksdbjni-6.15.5-linux64.jar"
+[ "$change_rocksdb_jni" == 1 ] && param_rocksdb_jni="--ydb_rocksdb_jni=$(readlink -f $(dirname $ROCKSDB_TEST_HELPER)/3rd-party/rocksdb/java/target/rocksdbjni-*-linux64.jar)"
 
 cat <<EOB >"$args_file"
 {
