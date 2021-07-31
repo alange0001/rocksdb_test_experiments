@@ -9,11 +9,17 @@ config_template=${config_template:-08}
 config_modifiers=${config_modifiers:-}
 config_file="/tmp/rocksdb_config.options"
 
+device=${device:-s980pro250}
+data_path=${data_path:-/media/auto/$device}
+
 function main() {
 
+	ROCKSDB_TEST_HELPER="$(get_project_path rocksdb_test_helper)"
+	ROCKSDB_CONFIG_GEN="$(get_project_path rocksdb_config_gen)"
+
 	exp_n="$config_template"
-	output_prefix="${exp_n}${exp_pref}-"
-	./rocksdb_config_gen --template="$config_template" --output="$config_file" $config_modifiers
+	output_prefix="${exp_n}${exp_pref}_${device}-"
+	"$ROCKSDB_CONFIG_GEN" --template="$config_template" --output="$config_file" $config_modifiers
 	cp -f "$config_file" "`dirname ${BASH_SOURCE[0]}`/${output_prefix}rocksdb.options"
 
 	if [ "$1" == 'create' ]; then
@@ -21,16 +27,16 @@ function main() {
 		ydb_workload_list=${ydb_workload_list:-workloada workloadb} \
 		ydb_threads=4                   \
 		save_args
-		./rocksdb_test_helper --load_args="$args_file" create_ycsb --duration=20
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" create_ycsb --duration=20
 		sleep 1m
-		./rocksdb_test_helper --load_args="$args_file" ycsb
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb
 		shift 1
 	fi
 	
 	if [ "$1" == 'backup' ]; then
 		save_args
 		cp "`dirname ${BASH_SOURCE[0]}`/${exp_n}_rocksdb.options" /media/auto/work2/rocksdb_6.15_tune/ycsb_db3tune_${exp_n}.options
-		tar -cf /media/auto/work2/rocksdb_6.15_tune/ycsb_db3tune_${exp_n}.tar -C "/media/auto/s980pro250/rocksdb_ycsb_0" .
+		tar -cf /media/auto/work2/rocksdb_6.15_tune/ycsb_db3tune_${exp_n}.tar -C "$data_path/rocksdb_ycsb_0" .
 		shift 1
 	fi
 
@@ -40,7 +46,7 @@ function main() {
 		ydb_workload_list=${ydb_workload_list:-workloada workloadb} \
 		ydb_threads=4                   \
 		save_args
-		./rocksdb_test_helper --load_args="$args_file" ycsb
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb
 		shift 1
 	fi
 
@@ -51,7 +57,7 @@ function main() {
 		at_script_gen=3                 \
 		save_args
 		
-		./rocksdb_test_helper --load_args="$args_file" ycsb_at3
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb_at3
 		
 		shift 1
 	fi
@@ -62,7 +68,7 @@ function main() {
 		ydb_threads=4                   \
 		ydb_workload_list="workloada workloadb"     \
 		save_args
-		./rocksdb_test_helper --load_args="$args_file" ycsb
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb
 		shift 1
 	fi
 
@@ -78,7 +84,7 @@ function main() {
 		at_iodepth_list=4               \
 		at_o_dsync=false                \
 		save_args
-		./rocksdb_test_helper --load_args="$args_file" ycsb_at3
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb_at3
 		shift 1
 	fi
 
@@ -94,7 +100,7 @@ function main() {
 		at_iodepth_list=4               \
 		at_o_dsync=false                \
 		save_args
-		./rocksdb_test_helper --load_args="$args_file" ycsb_at3
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb_at3
 		shift 1
 	fi
 
@@ -110,7 +116,7 @@ function main() {
 		at_iodepth_list=4               \
 		at_o_dsync=false                \
 		save_args
-		./rocksdb_test_helper --load_args="$args_file" ycsb_at3
+		"$ROCKSDB_TEST_HELPER" --load_args="$args_file" ycsb_at3
 		shift 1
 	fi
 
@@ -118,7 +124,6 @@ function main() {
 
 ###########################################################################################
 function save_args() {
-data_path=${data_path:-/media/auto/s980pro250}
 duration=${duration:-90}
 warm_period=${warm_period:-10}
 ydb_workload_list=${ydb_workload_list:-workloadb}
@@ -159,6 +164,24 @@ cat <<EOB >"$args_file"
 	"params": "--perfmon --ydb_socket=true --socket=/tmp/rocksdb_test.sock $param_rocksdb_jni"
 }
 EOB
+}
+
+###########################################################################################
+function get_project_path() {
+	local cur_path="${PROJECT_PATH:-.}"
+	while [ -d "$cur_path" ]; do
+		if [ -e "$cur_path/$1" ]; then
+			echo "$cur_path/$1"
+			return 0
+		fi
+		cur_path="../$cur_path"
+	done
+	d="$(which $1)"
+	if [ $? != 0 ]; then
+		echo "ERROR: program named $1 not found" >&2
+		exit 1
+	fi
+	echo "$d"
 }
 
 ###########################################################################################
