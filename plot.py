@@ -351,7 +351,6 @@ class File:
 		return open(self._filename, 'rt')
 
 	_filename_without_ext_cache = None
-
 	@property
 	def _filename_without_ext(self) -> str:
 		if self._filename_without_ext_cache is None:
@@ -361,32 +360,38 @@ class File:
 
 	def load_data(self):
 		with self.open_file() as file:
-			for line in file.readlines():
-				parsed_line = re.findall(r'Args\.([^:]+): *(.+)', line)
-				if len(parsed_line) > 0:
-					self._params[parsed_line[0][0]] = try_convert(parsed_line[0][1], int, float)
+			line_count = 0
+			try:
+				for line in file:
+					line_count += 1
+					parsed_line = re.findall(r'Args\.([^:]+): *(.+)', line)
+					if len(parsed_line) > 0:
+						self._params[parsed_line[0][0]] = try_convert(parsed_line[0][1], int, float)
 
-				parsed_line = re.findall(r'Task ([^,]+), STATS: (.+)', line)
-				if len(parsed_line) > 0:
-					task = parsed_line[0][0]
-					try:
-						data = json.loads(parsed_line[0][1])
-					except:
-						print("json exception (task {}): {}".format(task, parsed_line[0][1]))
-					# print("Task {}, data: {}".format(task, data))
-					if self._data.get(task) is None:
-						self._data[task] = []
-					data_dict = collections.OrderedDict()
-					self._data[task].append(data_dict)
-					for k, v in data.items():
-						data_dict[k] = try_convert(v, int, float, decimal_suffix)
-			for e in self._data.keys(): # delete the 1st data of each task
+					parsed_line = re.findall(r'Task ([^,]+), STATS: (.+)', line)
+					if len(parsed_line) > 0:
+						task = parsed_line[0][0]
+						try:
+							data = json.loads(parsed_line[0][1])
+						except:
+							print("json exception (task {}): {}".format(task, parsed_line[0][1]))
+						# print("Task {}, data: {}".format(task, data))
+						if self._data.get(task) is None:
+							self._data[task] = []
+						data_dict = collections.OrderedDict()
+						self._data[task].append(data_dict)
+						for k, v in data.items():
+							data_dict[k] = try_convert(v, int, float, decimal_suffix)
+			except EOFError as e:
+				print(f'WARN: EOFError exception at line {line_count}: {str(e)}')
+
+			for e in self._data.keys():  # delete the 1st data of each task
 				del self._data[e][0]
 
-		self._num_at = self._params['num_at']
-		self._num_dbs = self._params['num_dbs']
-		self._num_ydbs = self._params['num_ydbs']
-		self._stats_interval = self._params['stats_interval']
+		self._num_at   = coalesce(self._params.get('num_at'), 0)
+		self._num_dbs  = coalesce(self._params.get('num_dbs'), 0)
+		self._num_ydbs = coalesce(self._params.get('num_ydbs'), 0)
+		self._stats_interval = coalesce(self._params.get('stats_interval'), 5)
 		if self._num_at > 0:
 			self._at_direct_io = (self._params['at_params[0]'].find('--direct_io') >= 0)
 
@@ -394,31 +399,36 @@ class File:
 		num_dbs = 0
 		cur_db = -1
 		with self.open_file() as file:
-			for line in file.readlines():
-				if num_dbs == 0:
-					parsed_line = re.findall(r'Args\.num_dbs: *([0-9]+)', line)  # number of DBs
-					if len(parsed_line) > 0:
-						num_dbs = int(parsed_line[0][0])
-						for i in range(0, num_dbs):
-							self._dbbench.append(collections.OrderedDict())
-					continue
-				parsed_line = re.findall(r'Executing *db_bench\[([0-9]+)\]. *Command:', line)  # command of DB [i]
-				if len(parsed_line) > 0:
-					cur_db = int(parsed_line[0][0])
-					continue
-				parsed_line = re.findall(r'^\[.*', line) # end of the command
-				if len(parsed_line) > 0:
-					if cur_db == num_dbs -1: break
-					else: continue
-				for l2 in line.split("--"): # parameters
-					parsed_line = re.findall(r'\s*([^=]+)="([^"]+)"', l2)
-					if len(parsed_line) > 0:
-						self._dbbench[cur_db][parsed_line[0][0]] = try_convert(parsed_line[0][1], int, float)
+			line_count = 0
+			try:
+				for line in file:
+					line_count += 1
+					if num_dbs == 0:
+						parsed_line = re.findall(r'Args\.num_dbs: *([0-9]+)', line)  # number of DBs
+						if len(parsed_line) > 0:
+							num_dbs = int(parsed_line[0][0])
+							for i in range(0, num_dbs):
+								self._dbbench.append(collections.OrderedDict())
 						continue
-					parsed_line = re.findall(r'\s*([^=]+)=([^ ]+)', l2)
+					parsed_line = re.findall(r'Executing *db_bench\[([0-9]+)\]. *Command:', line)  # command of DB [i]
 					if len(parsed_line) > 0:
-						self._dbbench[cur_db][parsed_line[0][0]] = try_convert(parsed_line[0][1], int, float)
+						cur_db = int(parsed_line[0][0])
 						continue
+					parsed_line = re.findall(r'^\[.*', line) # end of the command
+					if len(parsed_line) > 0:
+						if cur_db == num_dbs -1: break
+						else: continue
+					for l2 in line.split("--"): # parameters
+						parsed_line = re.findall(r'\s*([^=]+)="([^"]+)"', l2)
+						if len(parsed_line) > 0:
+							self._dbbench[cur_db][parsed_line[0][0]] = try_convert(parsed_line[0][1], int, float)
+							continue
+						parsed_line = re.findall(r'\s*([^=]+)=([^ ]+)', l2)
+						if len(parsed_line) > 0:
+							self._dbbench[cur_db][parsed_line[0][0]] = try_convert(parsed_line[0][1], int, float)
+							continue
+			except EOFError as e:
+				print(f'WARN: EOFError exception at line {line_count}: {str(e)}')
 
 	def print_params(self):
 		print('Params:')
