@@ -5,7 +5,7 @@ set -e
 output_prefix="00-"
 args_file="/tmp/rocksdb_test_helper.args"
 
-config_template=${config_template:-08}
+config_template=${config_template:-09}
 config_modifiers=${config_modifiers:-}
 config_file="/tmp/rocksdb_config.options"
 
@@ -14,16 +14,17 @@ data_path=${data_path:-/media/auto/$device}
 
 function main() {
 
-	ROCKSDB_TEST_HELPER="$(get_project_path rocksdb_test_helper)"
-	ROCKSDB_CONFIG_GEN="$(get_project_path rocksdb_config_gen)"
-
-	exp_n="$config_template"
+	ROCKSDB_TEST_HELPER=$(get_executable_path rocksdb_test_helper)
+	ROCKSDB_CONFIG_GEN=$(get_executable_path rocksdb_config_gen)
+	
+	exp_n=$config_template
 	output_prefix="${exp_n}${exp_pref}_${device}-"
 	"$ROCKSDB_CONFIG_GEN" --template="$config_template" --output="$config_file" $config_modifiers
 	cp -f "$config_file" "`dirname ${BASH_SOURCE[0]}`/${output_prefix}rocksdb.options"
 
 	if [ "$1" == 'create' ]; then
 		duration=${duration:-70}        \
+		warm_period=${warm_period:-10}  \
 		ydb_workload_list=${ydb_workload_list:-workloada workloadb} \
 		ydb_threads=4                   \
 		save_args
@@ -167,14 +168,16 @@ EOB
 }
 
 ###########################################################################################
-function get_project_path() {
-	local cur_path="${PROJECT_PATH:-.}"
+function get_executable_path() {
+	local cur_path=${PROJECT_PATH:-.}
 	while [ -d "$cur_path" ]; do
+		#echo "DEBUG: cur_path = $cur_path" >&2
 		if [ -e "$cur_path/$1" ]; then
-			echo "$cur_path/$1"
+			readlink -f "$cur_path/$1"
 			return 0
 		fi
-		cur_path="../$cur_path"
+		[ "$(readlink -f "$cur_path")" == '/' ] && break
+		cur_path="$cur_path/.."
 	done
 	d="$(which $1)"
 	if [ $? != 0 ]; then
