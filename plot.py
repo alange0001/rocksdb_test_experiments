@@ -66,6 +66,7 @@ class Options:
 	use_at3_counters = True
 	at3_ticks = True
 	fio_folder = None
+	plot_all_ecdf = True
 	plot_all_dbmean = True
 	plot_all_pressure = True
 	all_pressure_label = None  # callable f(obj : File) -> str
@@ -196,10 +197,32 @@ class AllFiles:
 			self._file_objs[i].graph_all()
 
 		print('AllFiles Graphs:')
+		if self._options.plot_all_ecdf:
+			self.graph_ecdf()
 		if self._options.plot_all_dbmean:
 			self.graph_dbmean()
 		if self._options.plot_all_pressure:
 			self.graph_pressure()
+
+	def graph_ecdf(self):
+		df = self.pd_data
+		if 'ycsb[0].ops_per_s' not in df.keys() or 'af_name' not in df.keys():
+			print('ERROR: ycsb[0].ops_per_s or af_name not found in pd_data')
+			return
+
+		g = sns.displot(data=df, x='ycsb[0].ops_per_s', hue='af_name', kind='ecdf')
+		fig = g.fig
+		fig.set_figheight(3)
+		fig.set_figwidth(12)
+		g.set_axis_labels('KV-store throughput', 'Proportion')
+		ax = g.axes[0][0]
+		ax.grid(which='major', color='#888888', linestyle='--')
+
+		if self._options.save:
+			for f in self._options.formats:
+				save_name = f'{self._filename}_graph_ecdf.{f}'
+				fig.savefig(save_name, bbox_inches="tight")
+		plt.show()
 
 	def graph_dbmean(self):
 		pressures = self.file_pressures
