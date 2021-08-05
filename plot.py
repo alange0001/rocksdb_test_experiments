@@ -217,7 +217,7 @@ class AllFiles:
 		fig = g.fig
 		fig.set_figheight(3)
 		fig.set_figwidth(12)
-		g.set_axis_labels('KV-store throughput', 'Proportion')
+		g.set_axis_labels('tx/s', 'Proportion')
 		ax = g.axes[0][0]
 		ax.grid(which='major', color='#888888', linestyle='--')
 
@@ -2126,6 +2126,72 @@ class File:
 				save_name = f'{self._filename_without_ext}_graph_pairgrid_kv.{f}'
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
+
+	def graph_ecdf_grid(self, **kargs):
+		try:
+			df = self.pd_data
+
+			args = self.overlap_args(kargs)
+			ecdf_args = {}
+
+			if args.get('hue') is not None:
+				ecdf_args['hue'] = self.check_and_get_column(args.get('hue'))
+
+			cols = {
+				'tx/s': 'ycsb[0].ops_per_s',
+				'comp. f.': 'ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles',
+				'kv:r/s': 'performancemonitor.containers.ycsb_0.blkio.serviced/s.Read',
+				'kv:w/s': 'performancemonitor.containers.ycsb_0.blkio.serviced/s.Write',
+				"disk:r/s": "performancemonitor.disk.iostat.r/s",  # IOPS
+				"disk:w/s": "performancemonitor.disk.iostat.w/s",
+				"disk:r_size": "performancemonitor.disk.iostat.rareq-sz",  # block size
+				"disk:w_size": "performancemonitor.disk.iostat.wareq-sz",
+				"disk:queue": "performancemonitor.disk.iostat.aqu-sz",  # iodepth
+				"disk:r_await": "performancemonitor.disk.iostat.r_await",
+				"disk:w_await": "performancemonitor.disk.iostat.w_await",
+			}
+			for v in cols.values():
+				self.check_and_get_column(v)
+
+			fig = plt.figure()
+			gs = fig.add_gridspec(1, len(cols), hspace=0., wspace=0.)
+			axs = gs.subplots()
+			fig.set_figheight(2)
+			fig.set_figwidth(3 * len(cols))
+
+			ax_i = -1
+			for k, c in cols.items():
+				ax_i += 1
+				ax = axs[ax_i]
+
+				sns.ecdfplot(ax=ax, data=df, x=c, **ecdf_args, legend=(ax_i == len(cols) - 1))
+
+				if ax_i > 0:
+					ax.set(yticklabels=[])
+				if ax_i == len(cols)-1:
+					leg = ax.get_legend()
+					if args.get('hue_title') is not None:
+						leg.set_title(args['hue_title'])
+
+				ax.set(xlabel=k, ylabel=None)
+				ax.xaxis.set_minor_locator(AutoMinorLocator(4))
+				ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+				ax.grid(which='major', color='#CCCCCC', linestyle='--')
+				ax.grid(which='minor', color='#CCCCCC', linestyle=':')
+
+			fig.suptitle(self.get_graph_title(args, "ECDF Grid"), y=1.2)
+			if self._options.save:
+				for f in self._options.formats:
+					save_name = f'{self._filename_without_ext}_graph_ecdf_grid.{f}'
+					fig.savefig(save_name, bbox_inches="tight")
+			plt.show()
+
+		except Exception as e:
+			print(f'ERROR in graph_ecdf_grid(): {str(e)}')
+			if self._options.trace_exceptions:
+				exc_type, exc_value, exc_traceback = sys.exc_info()
+				sys.stderr.write('Exception:\n' +
+								 ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + '\n')
 
 	def set_x_ticks(self, ax):
 		if self._options.graphTickMajor is not None:
