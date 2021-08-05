@@ -1006,6 +1006,10 @@ class File:
 				ax.grid(which='minor', color='#CCCCCC', linestyle=':')
 
 			fig.suptitle(self.get_graph_title(args, "Performance Summary"), y=1.0)
+			if self._options.save:
+				for f in self._options.formats:
+					save_name = f'{self._filename_without_ext}_graph_db_summary.{f}'
+					fig.savefig(save_name, bbox_inches="tight")
 			plt.show()
 
 		except Exception as e:
