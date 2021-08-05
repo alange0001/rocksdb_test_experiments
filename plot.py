@@ -15,6 +15,8 @@ import os
 import math
 import collections
 import re
+import sys
+import traceback
 import json
 import copy
 import sqlite3
@@ -30,6 +32,7 @@ sns.set_style('white')
 
 
 class Options:
+	trace_exceptions = False
 	formats = ['png', 'pdf']
 	print_params = False
 	file_description = None  # str or callable f(obj : File) -> str
@@ -890,6 +893,127 @@ class File:
 				save_name = f'{self._filename_without_ext}_graph_db.{f}'
 				fig.savefig(save_name, bbox_inches="tight")
 		plt.show()
+
+	def check_and_get_column(self, name):
+		if name not in self.pd_data.keys():
+			raise KeyError(f'column named "{name}" not found in pd_data')
+		return name
+
+	def graph_db_summary(self, **kargs):
+		try:
+			df = self.pd_data
+
+			level_list = self.get_lsm_levels()
+			l_max = level_list[-1] if len(level_list) > 0 else -1
+			if l_max < 0:
+				raise Exception('no LSM-tree level stats')
+
+			cols = {
+				'time': self.check_and_get_column('time_min'),
+				'tx/s': self.check_and_get_column('ycsb[0].ops_per_s'),
+				'comp': self.check_and_get_column('ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles'),
+			}
+
+			args = self.overlap_args(kargs)
+
+			ax_space = 2
+			fig = plt.figure()
+			gs = fig.add_gridspec((l_max + 1) * 2 + ax_space, 2, hspace=0.0, wspace=0.3)
+			axs = gs.subplots()
+			fig.set_figheight(8)
+			fig.set_figwidth(14)
+
+			for i in range(l_max + 1):
+				axs[i, 0].remove()
+				axs[i, 1].remove()
+				axs[i + (l_max + 1) + ax_space, 1].remove()
+			for i in range(1, ax_space + 1):
+				axs[l_max + i, 0].remove()
+				axs[l_max + i, 1].remove()
+
+			ax_grid = []
+			###############
+			ax = fig.add_subplot(gs[0:(l_max + 1), 0])
+			ax_grid.append(ax)
+			sns.lineplot(ax=ax, data=df, x=cols['time'],
+						 y=cols['tx/s'],
+						 label='tx/s')
+			ax.set(title='Throughput and Compactions', xlabel='time (min)', ylabel='tx/s')
+			ax.set_ylim([0, None])
+			ax.legend(loc='center left')
+			ax2 = ax.twinx()
+			key = cols['comp']
+			sns.lineplot(ax=ax2, data=df, x=cols['time'],
+						 y=key,
+						 label='comp. files', color='green')
+			ax2.legend(loc='center right')
+			ax2.set(ylabel='comp. files')
+			ax2.set_ylim([0, float(df[key].max()) * 2.5])
+
+			self.add_upper_ticks(ax, None, None, args)
+
+			###############
+			ecdf_kw = {}
+			if args.get('hue') is not None:
+				ecdf_kw['hue'] = self.check_and_get_column(args['hue'])
+			elif args.get('ycsb_tag') is not None:
+				ecdf_kw['hue'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+			elif self._options.at3_ticks and self._num_at > 0:
+				ecdf_kw['hue'] = self.check_and_get_column('w_name')
+
+			###############
+			ax = fig.add_subplot(gs[0:(l_max + 1), 1])
+			ax_grid.append(ax)
+			sns.ecdfplot(ax=ax, data=df,
+						 x=cols['tx/s'],
+						 **ecdf_kw)
+			ax.set(title='tx/s CDF', xlabel='tx/s', ylabel='proportion')
+			ax.set_xlim([0, None])
+
+			###############
+			ax = fig.add_subplot(gs[(l_max + 1) + ax_space:, 1])
+			ax_grid.append(ax)
+			sns.ecdfplot(ax=ax, data=df,
+						 x=cols['comp'],
+						 legend=False, **ecdf_kw)
+			ax.set(title='Compaction CDF', xlabel='comp. files', ylabel='proportion')
+			ax.set_xlim([0, None])
+
+			###############
+			scale = 1024. ** 3
+			X = df['time_min']
+			for i in range(l_max + 1):
+				ax = axs[(l_max + 1) + ax_space + i, 0]
+				ax_grid.append(ax)
+				key = f'ycsb[0].socket_report.rocksdb.cfstats.compaction.L{i}.SizeBytes'
+				if key in df.keys():
+					Y = [v / scale for v in df[key]]
+					ax.plot(X, Y, '-', lw=1.4)
+					ax.set_ylim([-0.005, float(df[key].max() / scale) * 1.1])
+				else:
+					ax.plot(X, [0 for _ in X], '-', lw=1.4)
+				if i == 0:
+					ax.set(title='Leve Size (GiB)', xlabel=None, ylabel=None)
+				elif i == l_max:
+					ax.set(xlabel='time (min)', ylabel=None)
+				else:
+					ax.set(xlabel=None, ylabel=None)
+
+			for ax in ax_grid:
+				ax.xaxis.set_minor_locator(AutoMinorLocator(4))
+				ax.yaxis.set_minor_locator(AutoMinorLocator(2))
+				ax.grid(which='major', color='#CCCCCC', linestyle='--')
+				ax.grid(which='minor', color='#CCCCCC', linestyle=':')
+
+			fig.suptitle(self.get_graph_title(args, "Performance Summary"), y=1.0)
+			plt.show()
+
+		except Exception as e:
+			print(f'ERROR in graph_db_summary(): {str(e)}')
+			if self._options.trace_exceptions:
+				exc_type, exc_value, exc_traceback = sys.exc_info()
+				sys.stderr.write('Exception:\n' +
+								 ''.join(traceback.format_exception(exc_type, exc_value, exc_traceback)) + '\n')
 
 	def graph_io(self, **kargs):
 		self.graph_io_new(**kargs)
@@ -2311,7 +2435,7 @@ class FioFiles:
 				self._files.append(filename)
 				self._data.append(j)
 		except Exception as e:
-			print("failed to read file {}: {}".format(filename, str(e)))
+			print("ERROR: failed to read file {}: {}".format(filename, str(e)))
 
 	def sortPatterns(self, patterns):
 		ret = []
