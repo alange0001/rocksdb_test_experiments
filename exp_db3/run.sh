@@ -90,8 +90,8 @@ function main() {
 	fi
 
 	if [ "$1" == 'pressure0' ]; then
-		duration=${duration:-61}        \
-		warm_period=${warm_period:-1}   \
+		duration=${duration:-70}        \
+		warm_period=${warm_period:-10}  \
 		ydb_threads=4                   \
 		ydb_workload_list=${ydb_workload_list:-workloadb}   \
 		at_interval=${at_interval:-10}  \
@@ -162,9 +162,32 @@ cat <<EOB >"$args_file"
 	"at_interval": $at_interval,
 	"at_block_size_list": "$at_block_size_list",
 	"at_random_ratio": "$at_random_ratio",
+	"commands": "$(get_commands |paste -s -d'#')",
 	"params": "--perfmon --ydb_socket=true --socket=/tmp/rocksdb_test.sock $param_rocksdb_jni"
 }
 EOB
+}
+
+###########################################################################################
+function get_commands() {
+if [ "$commands" == 'tr' ]; then
+cat <<EOB
++30s # y* setoptions tag.a=tr1 column_family=usertable level0_file_num_compaction_trigger=1
+15m  # y* setoptions tag.a=tr2 column_family=usertable level0_file_num_compaction_trigger=2
+25m  # y* setoptions tag.a=tr3 column_family=usertable level0_file_num_compaction_trigger=3
+35m  # y* setoptions tag.a=tr4 column_family=usertable level0_file_num_compaction_trigger=4
+45m  # y* setoptions tag.a=tr6 column_family=usertable level0_file_num_compaction_trigger=6
+EOB
+elif [ "$commands" == 'level' ]; then
+cat <<EOB
++30s # y* setoptions tag.a=lb512 column_family=usertable max_bytes_for_level_base=512M
+15m  # y* setoptions tag.a=lb1024   column_family=usertable max_bytes_for_level_base=1G
+30m  # y* setoptions tag.a=lb1536   column_family=usertable max_bytes_for_level_base=1536M
+45m  # y* setoptions tag.a=lb2048   column_family=usertable max_bytes_for_level_base=2G
+EOB
+else
+	echo "$commands"
+fi
 }
 
 ###########################################################################################
