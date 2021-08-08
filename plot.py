@@ -916,24 +916,20 @@ class File:
 
 			args = self.overlap_args(kargs)
 
-			ax_space = 2
 			fig = plt.figure()
-			gs = fig.add_gridspec((l_max + 1) * 2 + ax_space, 2, hspace=0.0, wspace=0.3)
+			gs = fig.add_gridspec(l_max + 1, 5, hspace=0.0, wspace=0.4)
 			axs = gs.subplots()
-			fig.set_figheight(8)
-			fig.set_figwidth(14)
+			fig.set_figheight(3)
+			fig.set_figwidth(28)
+			fig.suptitle(self.get_graph_title(args, "Performance Summary"), y=1.18)
 
 			for i in range(l_max + 1):
-				axs[i, 0].remove()
-				axs[i, 1].remove()
-				axs[i + (l_max + 1) + ax_space, 1].remove()
-			for i in range(1, ax_space + 1):
-				axs[l_max + i, 0].remove()
-				axs[l_max + i, 1].remove()
+				for j in [0, 2, 3, 4]:
+					axs[i, j].remove()
 
 			ax_grid = []
-			###############
-			ax = fig.add_subplot(gs[0:(l_max + 1), 0])
+			############### g1
+			ax = fig.add_subplot(gs[0:, 0])
 			ax_grid.append(ax)
 			sns.lineplot(ax=ax, data=df, x=cols['time'],
 						 y=cols['tx/s'],
@@ -942,48 +938,59 @@ class File:
 			ax.set_ylim([0, None])
 			ax.legend(loc='center left')
 			ax2 = ax.twinx()
+			ax2.sharex(ax)
 			key = cols['comp']
 			sns.lineplot(ax=ax2, data=df, x=cols['time'],
 						 y=key,
 						 label='comp. files', color='green')
 			ax2.legend(loc='center right')
 			ax2.set(ylabel='comp. files')
-			ax2.set_ylim([0, float(df[key].max()) * 2.5])
+			ax2.set_ylim([0, float(df[key].max()) * 3.])
 
 			self.add_upper_ticks(ax, None, None, args)
 
 			###############
-			ecdf_kw = {}
+			g3_kw, g4_kw, g5_kw = {}, {}, {}
 			if args.get('hue') is not None:
-				ecdf_kw['hue'] = self.check_and_get_column(args['hue'])
+				g3_kw['hue'] = self.check_and_get_column(args['hue'])
+				g4_kw['x'] = self.check_and_get_column(args['hue'])
+				g5_kw['x'] = self.check_and_get_column(args['hue'])
 			elif args.get('ycsb_tag') is not None:
-				ecdf_kw['hue'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+				g3_kw['hue'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+				g4_kw['x'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+				g5_kw['x'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
 			elif self._options.at3_ticks and self._num_at > 0:
-				ecdf_kw['hue'] = self.check_and_get_column('w_name')
+				g3_kw['hue'] = self.check_and_get_column('w_name')
+				g4_kw['x'] = self.check_and_get_column('w_name')
+				g5_kw['x'] = self.check_and_get_column('w_name')
 
-			###############
-			ax = fig.add_subplot(gs[0:(l_max + 1), 1])
+			############### g3
+			ax = fig.add_subplot(gs[0:, 2])
 			ax_grid.append(ax)
+			if isinstance(args.get('g3_args'), dict):
+				g3_kw = {**g3_kw, **args['g3_args']}
 			sns.ecdfplot(ax=ax, data=df,
 						 x=cols['tx/s'],
-						 **ecdf_kw)
+						 **g3_kw)
 			ax.set(title='tx/s CDF', xlabel='tx/s', ylabel='proportion')
 			ax.set_xlim([0, None])
+			if 'hue_title' in args.keys():
+				ax.get_legend().set_title(args['hue_title'])
 
-			###############
-			ax = fig.add_subplot(gs[(l_max + 1) + ax_space:, 1])
+			############### g4
+			ax = fig.add_subplot(gs[0:, 3])
 			ax_grid.append(ax)
-			sns.ecdfplot(ax=ax, data=df,
-						 x=cols['comp'],
-						 legend=False, **ecdf_kw)
-			ax.set(title='Compaction CDF', xlabel='comp. files', ylabel='proportion')
-			ax.set_xlim([0, None])
+			if isinstance(args.get('g4_args'), dict):
+				g4_kw = {**g4_kw, **args['g4_args']}
+			sns.violinplot(ax=ax, data=df,
+						 y=cols['comp'], **g4_kw)
+			ax.set(title='Compaction', ylabel='comp. files', xlabel=args['hue_title'] if 'hue_title' in args.keys() else None)
 
-			###############
+			############### g2
 			scale = 1024. ** 3
 			X = df['time_min']
 			for i in range(l_max + 1):
-				ax = axs[(l_max + 1) + ax_space + i, 0]
+				ax = axs[i, 1]
 				ax_grid.append(ax)
 				key = f'ycsb[0].socket_report.rocksdb.cfstats.compaction.L{i}.SizeBytes'
 				if key in df.keys():
@@ -999,13 +1006,23 @@ class File:
 				else:
 					ax.set(xlabel=None, ylabel=None)
 
+			self.add_upper_ticks(axs[0, 1], None, None, args)
+
+			############### g5
+			ax = fig.add_subplot(gs[0:, 4])
+			ax_grid.append(ax)
+			if isinstance(args.get('g5_args'), dict):
+				g5_kw = {**g5_kw, **args['g5_args']}
+			sns.violinplot(ax=ax, data=df, y=cols['tx/s'], **g5_kw)
+			ax.set(title='tx/s', ylabel='tx/s', xlabel=args['hue_title'] if 'hue_title' in args.keys() else None)
+
+			###############
 			for ax in ax_grid:
 				ax.xaxis.set_minor_locator(AutoMinorLocator(4))
 				ax.yaxis.set_minor_locator(AutoMinorLocator(2))
 				ax.grid(which='major', color='#CCCCCC', linestyle='--')
 				ax.grid(which='minor', color='#CCCCCC', linestyle=':')
 
-			fig.suptitle(self.get_graph_title(args, "Performance Summary"), y=1.0)
 			if self._options.save:
 				for f in self._options.formats:
 					save_name = f'{self._filename_without_ext}_graph_db_summary.{f}'
@@ -1742,13 +1759,12 @@ class File:
 		x_min, x_max = df['time_min'].min(), df['time_min'].max()
 		aux = (x_max - x_min) * 0.01
 
-		ax_space = 2
 		fig = plt.figure()
-		gs = fig.add_gridspec((l_max + 1) * 2 + ax_space, 2, hspace=0.0, wspace=0.2)
+		gs = fig.add_gridspec(l_max + 1, 4, hspace=0.0, wspace=0.2)
 		axs = gs.subplots()
-		fig.suptitle(self.get_graph_title(args, "LSM-tree stats"), y=1.0)
-		fig.set_figheight(9)
-		fig.set_figwidth(14)
+		fig.suptitle(self.get_graph_title(args, "LSM-tree stats"), y=1.14)
+		fig.set_figheight(4)
+		fig.set_figwidth(25)
 
 		graphs = [
 			{'stat_name': 'SizeBytes',
@@ -1756,18 +1772,15 @@ class File:
 			 'scale': 1024.0 ** 3,
 			 'title': 'Size (GiB)'},
 			{'stat_name': 'Score',
-			 'axs': [axs[i, 0] for i in range(l_max+1+ax_space, (l_max + 1) * 2 + ax_space)],
-			 'scale': 1},
-			{'stat_name': 'NumFiles',
 			 'axs': [axs[i, 1] for i in range(0, l_max + 1)],
 			 'scale': 1},
+			{'stat_name': 'NumFiles',
+			 'axs': [axs[i, 2] for i in range(0, l_max + 1)],
+			 'scale': 1},
 			{'stat_name': 'CompactedFiles',
-			 'axs': [axs[i, 1] for i in range(l_max+1+ax_space, (l_max + 1) * 2 + ax_space)],
+			 'axs': [axs[i, 3] for i in range(0, l_max + 1)],
 			 'scale': 1},
 		]
-		for i in range(1, ax_space+1):
-			fig.delaxes(axs[l_max + i, 0])
-			fig.delaxes(axs[l_max + i, 1])
 
 		df_keys = df.keys()
 
