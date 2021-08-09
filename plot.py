@@ -795,12 +795,16 @@ class File:
 				if sinfo is not None:
 					r = re.findall(r'([0-9]+\.[0-9]+)', sinfo)
 					if len(r) > 0: ret.append(f'K{r[0]}')
+			elif i == 'stats_interval':
+				aux = self._params.get('stats_interval')
+				if aux is not None:
+					ret.append(f'si{aux}')
 			else:
 				print(f'ERROR: invalid label item "{i}"')
 		return ','.join(ret)
 
 	@classmethod
-	def file_label_f(cls, label_items=['workload', 'device', 'kernel']):
+	def file_label_f(cls, label_items=['workload', 'device', 'kernel', 'stats_interval']):
 		return lambda self: self.get_file_label(label_items)
 
 	def graph_db(self, **kargs):
