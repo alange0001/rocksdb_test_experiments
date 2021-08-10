@@ -798,8 +798,11 @@ class File:
 					ret.append(f'{r[0]}')
 			elif i == 'kernel':
 				sinfo = get_recursive(self._data, 'performancemonitor', 0, 'system_info')
-				if sinfo is not None:
+				if isinstance(sinfo, str):
 					r = re.findall(r'([0-9]+\.[0-9]+)', sinfo)
+					if len(r) > 0: ret.append(f'K{r[0]}')
+				elif isinstance(sinfo, dict):
+					r = re.findall(r'([0-9]+\.[0-9]+)', sinfo['kernel-release'])
 					if len(r) > 0: ret.append(f'K{r[0]}')
 			elif i == 'stats_interval':
 				aux = self._params.get('stats_interval')
