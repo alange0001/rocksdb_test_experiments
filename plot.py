@@ -188,12 +188,17 @@ class AllFiles:
 			df = f.pd_data
 			if callable(self._options.file_label):
 				df['af_name'] = self._options.file_label(f)
+			elif isinstance(self._options.file_label, list):
+				df['af_name'] = f.get_file_label(*self._options.file_label)
 			else:
 				df['af_name'] = f.filename
 			df_list.append(df)
 
-		self._pd_data = pd.concat(df_list, ignore_index=True)
-		return self._pd_data
+		if len(df_list) > 0:
+			self._pd_data = pd.concat(df_list, ignore_index=True)
+			return self._pd_data
+		print(f'ERROR: no files registered in AllFiles {self._filename}')
+		return None
 
 	def graph_all(self):
 		for i in range(0, len(self._file_list)):
@@ -209,6 +214,7 @@ class AllFiles:
 
 	def graph_ecdf(self):
 		df = self.pd_data
+		if df is None: return
 		if 'ycsb[0].ops_per_s' not in df.keys() or 'af_name' not in df.keys():
 			print('ERROR: ycsb[0].ops_per_s or af_name not found in pd_data')
 			return
@@ -772,7 +778,7 @@ class File:
 			return f'{graph_default}\n{self.filename}'
 		return args.get('title') if isinstance(args.get('title'), str) else '(unknown type)'
 
-	def get_file_label(self, label_items=['workload']):
+	def get_file_label(self, *label_items):
 		ret = []
 		for i in label_items:
 			if i == 'workload' and self._params['num_ydbs'] > 0:
@@ -799,13 +805,29 @@ class File:
 				aux = self._params.get('stats_interval')
 				if aux is not None:
 					ret.append(f'si{aux}')
+			elif i.find('re:') == 0:
+				r = re.findall(i[3:], self.filename)
+				while isinstance(r, list) or isinstance(r, set): r = r[0]
+				ret.append(str(r))
+			elif i.find('param:') == 0:
+				aux = i.split(':')
+				key = aux[1]
+				name = aux[2] if len(aux) >= 3 else ''
+				if self._params.get(key) is not None:
+					ret.append(f'{name}{self._params[key]}')
+				else:
+					print(f'WARN: parameter named "{key}" not found')
 			else:
 				print(f'ERROR: invalid label item "{i}"')
+		if len(ret) == 0:
+			return self._filename_without_ext
 		return ','.join(ret)
 
 	@classmethod
-	def file_label_f(cls, label_items=['workload', 'device', 'kernel', 'stats_interval']):
-		return lambda self: self.get_file_label(label_items)
+	def file_label_f(cls, *label_items):
+		if len(label_items) == 0:
+			label_items = ['workload', 'device', 'kernel', 'stats_interval']
+		return lambda self: self.get_file_label(*label_items)
 
 	def graph_db(self, **kargs):
 		num_dbbench, num_ycsb = self.count_dbs()
@@ -1533,6 +1555,8 @@ class File:
 
 			if callable(self._options.all_pressure_label):
 				file_label = self._options.all_pressure_label(self)
+			elif isinstance(self._options.all_pressure_label, list):
+				file_label = self.get_file_label(*self._options.all_pressure_label)
 			else:
 				file_label = f'bs = {self._params["at_block_size[0]"]}'
 			ret['file_label'] = file_label
