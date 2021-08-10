@@ -90,8 +90,8 @@ function main() {
 	fi
 
 	if [ "$1" == 'pressure0' ]; then
-		duration=${duration:-70}        \
-		warm_period=${warm_period:-10}  \
+		duration=${duration:-80}        \
+		warm_period=${warm_period:-20}  \
 		ydb_threads=4                   \
 		ydb_workload_list=${ydb_workload_list:-workloadb}   \
 		at_interval=${at_interval:-10}  \
@@ -127,6 +127,7 @@ function main() {
 function save_args() {
 duration=${duration:-90}
 warm_period=${warm_period:-10}
+stats_interval=${stats_interval:-5}
 ydb_workload_list=${ydb_workload_list:-workloadb}
 ydb_threads=${ydb_threads:-5}
 num_at=${num_at:-4}
@@ -151,6 +152,7 @@ cat <<EOB >"$args_file"
 	"__backup_ycsb": "$backup_file",
 	"duration": $duration,
 	"warm_period": $warm_period,
+	"stats_interval": $stats_interval,
 	"ydb_workload_list": "$ydb_workload_list",
 	"ydb_num_keys": 50000000,
 	"ydb_threads": $ydb_threads,
@@ -180,10 +182,28 @@ cat <<EOB
 EOB
 elif [ "$commands" == 'level' ]; then
 cat <<EOB
-+30s # y* setoptions tag.a=lb512 column_family=usertable max_bytes_for_level_base=512M
-15m  # y* setoptions tag.a=lb1024   column_family=usertable max_bytes_for_level_base=1G
-30m  # y* setoptions tag.a=lb1536   column_family=usertable max_bytes_for_level_base=1536M
-45m  # y* setoptions tag.a=lb2048   column_family=usertable max_bytes_for_level_base=2G
++30s # y* setoptions tag.a=lb512   column_family=usertable max_bytes_for_level_base=512M
+15m  # y* setoptions tag.a=lb1024  column_family=usertable max_bytes_for_level_base=1G
+30m  # y* setoptions tag.a=lb1536  column_family=usertable max_bytes_for_level_base=1536M
+45m  # y* setoptions tag.a=lb2048  column_family=usertable max_bytes_for_level_base=2G
+EOB
+elif [ "$commands" == 'T' ]; then
+cat <<EOB
++30s # y* test tag.a=T10a
+10m # y* setoptions tag.a=T14  column_family=usertable max_bytes_for_level_multiplier=14
+15m # y* setoptions tag.a=T20a column_family=usertable max_bytes_for_level_multiplier=20
+20m # y* test tag.a=T20b
+35m # y* setoptions tag.a=T10b column_family=usertable max_bytes_for_level_multiplier=10
+45m # y* test tag.a=T10c
+EOB
+elif [ "$commands" == 'Tltr' ]; then
+cat <<EOB
++30s # y* test tag.a=T10a
+10m # y* setoptions tag.a=T20l2tr15 column_family=usertable max_bytes_for_level_multiplier=20 max_bytes_for_level_base=2G level0_file_num_compaction_trigger=15
+15m # y* setoptions tag.a=l05tr4    column_family=usertable max_bytes_for_level_base=512M level0_file_num_compaction_trigger=4
+25m # y* setoptions tag.a=T10b      column_family=usertable max_bytes_for_level_multiplier=10
+35m # y* test tag.a=T10c
+45m # a* stop
 EOB
 else
 	echo "$commands"
