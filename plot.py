@@ -642,72 +642,64 @@ class File:
 				args[k] = v
 		return args
 
-	_pd_data = None
+	_pd_data_exp = None
+	def pd_data_exp(self, name):
+		if self._pd_data_exp is None: self._pd_data_exp = dict()
+		if name not in self._pd_data_exp.keys():
+			if name not in self._data.keys() or not isinstance(self._data[name], list):
+				print(f'ERROR: invalid experiment data "{name}" or not found')
+				return None
 
+			datatrasposed = collections.OrderedDict()
+			for i in range(len(self._data[name])):
+				for k, v in flat_dict(self._data[name][i]).items():
+					if k not in datatrasposed.keys():
+						datatrasposed[k] = [None for _ in range(i)]
+					datatrasposed[k].append(self._pd_data_convert(k, v))
+
+			maxlen = max([len(i) for i in datatrasposed.values()])
+			for v in datatrasposed.values():
+				while len(v) < maxlen: v.append(None)
+
+			df = pd.DataFrame(datatrasposed)
+			self._pd_data_exp[name] = df
+			return df
+		else:
+			return self._pd_data_exp[name]
+
+	_pd_data = None
 	@property
 	def pd_data(self):
 		if self._pd_data is not None:
 			return self._pd_data
 
-		pkey = None
+		primary_exp = None
 		for i in ['ycsb[0]', 'db_bench[0]', 'access_time3[0]', 'performancemonitor']:
 			if i in self._data.keys():
-				pkey = i
+				primary_exp = i
 				break
-		if pkey is None: return None
-		if len(self._data[pkey]) < 2: return None
+		if primary_exp is None: return None
+		if len(self._data[primary_exp]) < 2: return None
 
-		buckets_data = collections.OrderedDict()
-		for d in self._data[pkey]:
-			t = d['time']
-			bd = collections.OrderedDict()
-			bd['time'] = t
-			flat_dict(d, prefix=pkey, ret=bd)
-			buckets_data[t] = bd
+		primary_df = self.pd_data_exp(primary_exp)
+		primary_times = set(primary_df['time'])
+		primary_time_range = int(round((max(primary_times) - min(primary_times))/len(primary_times)))
+		primary_df = primary_df.rename(columns=
+				dict((k, f'{primary_exp}.{k}') for k in filter(lambda x: x != 'time', primary_df.keys())))
 
-		interval = int(self._data[pkey][1]['time'] - self._data[pkey][0]['time'])
-		buckets = collections.OrderedDict()
-		for i in range(max(buckets_data.keys())+interval+1):
-			for j in range(1,100):
-				bd = buckets_data.get(i - j)
-				if bd is not None:
-					buckets[i] = bd
-					break
-				bd = buckets_data.get(i + j)
-				if bd is not None:
-					buckets[i] = bd
-					break
-			if buckets.get(i) is None:
-				print(f'WARN: bucket {i} does not exist')
+		for sec_exp in self._data.keys():
+			if sec_exp == primary_exp: continue
+			sec_df = self.pd_data_exp(sec_exp)
+			if sec_df is None: continue
+			sec_df = sec_df.rename(columns=dict((k, f'{sec_exp}.{k}') for k in sec_df.keys()))
+			sec_df['time'] = join_time(sec_df[f'{sec_exp}.time'], primary_times, primary_time_range)
+			primary_df = pd.merge(primary_df, sec_df, on='time', how='left')
 
-		for k, d in self._data.items():
-			if k != pkey:
-				for di in d:
-					bucket_i = buckets.get(di['time'])
-					if bucket_i is not None:
-						flat_dict(di, prefix=k, ret=bucket_i)
-					elif di['time'] < max(buckets.keys()):
-						print(f'WARN: time {di["time"]} of key {k} not found in buckets')
+		primary_df = primary_df.loc[primary_df['time'] >= 0].sort_values('time')
+		primary_df.drop_duplicates(subset='time', keep='first', inplace=True)
+		primary_df['time_min'] = primary_df['time'] / 60.0
 
-		# Prepare data for the DataFrame
-		transpose = collections.OrderedDict()
-		for list_i in buckets_data.values():
-			for k, v in list_i.items():
-				if transpose.get(k) is None:
-					transpose[k] = []
-				if k != 'time':
-					while len(transpose[k]) < len(transpose['time'])-1:
-						transpose[k].append(None) # Missing data inside the time series
-				transpose[k].append(self._pd_data_convert(k, v))
-		# Add missing data at the end of each column
-		len_time = len(transpose['time'])
-		for v in transpose.values():
-			len_v = len(v)
-			for _ in range(0, len_time - len_v):
-				v.append(None)
-
-		ret = pd.DataFrame(transpose)
-		ret['time_min'] = ret['time'] / 60.0
+		ret = primary_df
 
 		if self._num_at > 0:
 			w_name = []
@@ -731,6 +723,8 @@ class File:
 			ret['w_name'] = ['w0' for _ in range(len(ret))]
 
 		self._pd_data = ret
+		self.tag_quantiles()
+		self.resume_at()
 		if self._options.after_pd_data is not None:
 			self._options.after_pd_data(self)
 		return ret
@@ -746,11 +740,11 @@ class File:
 		df = self.pd_data
 		keys = df.keys()
 		if 'w_name' not in keys:
-			print('ERROR: column w_name not found')
+			print('WARN: column w_name not found')
 			return
 		for colname, newcolumn in [
-			('ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles', 'quantile_compact'),
-			('ycsb[0].ops_per_s', 'quantile_ops')
+			('ycsb[0].socket_report.rocksdb.cfstats.compaction.Sum.CompactedFiles', 'quantile.compact'),
+			('ycsb[0].ops_per_s', 'quantile.ops')
 		]:
 			if colname not in keys:
 				print(f'WARN: column "{colname}" not found')
@@ -758,10 +752,13 @@ class File:
 			for w in pd.unique(df['w_name']):
 				df2 = df.loc[df['w_name'] == w, colname]
 				df.loc[df['w_name'] == w, newcolumn] = \
-					[0.25 if r < 0.26 else \
-					 0.5 if r < 0.51 else \
-					 0.75 if r < 0.76 else \
+					[0.25 if r < 0.26 else
+					 0.5 if r < 0.51 else
+					 0.75 if r < 0.76 else
 					 1.0 for r in df2.rank(pct=True)]
+
+	def resume_at(self):
+		pass  # TODO implement
 
 	def get_graph_title(self, args, graph_default):
 		if args.get('title') is None:
@@ -946,14 +943,14 @@ class File:
 			args = self.overlap_args(kargs)
 
 			fig = plt.figure()
-			gs = fig.add_gridspec(l_max + 1, 5, hspace=0.0, wspace=0.4)
+			gs = fig.add_gridspec(l_max + 1, 6, hspace=0.0, wspace=0.4)
 			axs = gs.subplots()
-			fig.set_figheight(3)
+			fig.set_figheight(4)
 			fig.set_figwidth(28)
 			fig.suptitle(self.get_graph_title(args, "Performance Summary"), y=1.18)
 
 			for i in range(l_max + 1):
-				for j in [0, 2, 3, 4]:
+				for j in [0, 2, 3, 4, 5]:
 					axs[i, j].remove()
 
 			ax_grid = []
@@ -978,43 +975,6 @@ class File:
 
 			self.add_upper_ticks(ax, None, None, args)
 
-			###############
-			g3_kw, g4_kw, g5_kw = {}, {}, {}
-			if args.get('hue') is not None:
-				g3_kw['hue'] = self.check_and_get_column(args['hue'])
-				g4_kw['x'] = self.check_and_get_column(args['hue'])
-				g5_kw['x'] = self.check_and_get_column(args['hue'])
-			elif args.get('ycsb_tag') is not None:
-				g3_kw['hue'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
-				g4_kw['x'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
-				g5_kw['x'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
-			elif self._options.at3_ticks and self._num_at > 0:
-				g3_kw['hue'] = self.check_and_get_column('w_name')
-				g4_kw['x'] = self.check_and_get_column('w_name')
-				g5_kw['x'] = self.check_and_get_column('w_name')
-
-			############### g3
-			ax = fig.add_subplot(gs[0:, 2])
-			ax_grid.append(ax)
-			if isinstance(args.get('g3_args'), dict):
-				g3_kw = {**g3_kw, **args['g3_args']}
-			sns.ecdfplot(ax=ax, data=df,
-						 x=cols['tx/s'],
-						 **g3_kw)
-			ax.set(title='tx/s CDF', xlabel='tx/s', ylabel='proportion')
-			ax.set_xlim([0, None])
-			if 'hue_title' in args.keys():
-				ax.get_legend().set_title(args['hue_title'])
-
-			############### g4
-			ax = fig.add_subplot(gs[0:, 3])
-			ax_grid.append(ax)
-			if isinstance(args.get('g4_args'), dict):
-				g4_kw = {**g4_kw, **args['g4_args']}
-			sns.violinplot(ax=ax, data=df,
-						 y=cols['comp'], **g4_kw)
-			ax.set(title='Compaction', ylabel='comp. files', xlabel=args['hue_title'] if 'hue_title' in args.keys() else None)
-
 			############### g2
 			scale = 1024. ** 3
 			X = df['time_min']
@@ -1037,6 +997,42 @@ class File:
 
 			self.add_upper_ticks(axs[0, 1], None, None, args)
 
+			###############
+			g3_kw, g4_kw, g5_kw = {}, {}, {}
+			if args.get('hue') is not None:
+				g3_kw['hue'] = self.check_and_get_column(args['hue'])
+				g4_kw['hue'] = self.check_and_get_column(args['hue'])
+				g5_kw['x']   = self.check_and_get_column(args['hue'])
+			elif args.get('ycsb_tag') is not None:
+				g3_kw['hue'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+				g4_kw['hue'] = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+				g5_kw['x']   = self.check_and_get_column(f'ycsb[0].socket_report.tag.{args["ycsb_tag"]}')
+			elif self._options.at3_ticks and self._num_at > 0:
+				g3_kw['hue'] = self.check_and_get_column('w_name')
+				g4_kw['hue'] = self.check_and_get_column('w_name')
+				g5_kw['x']   = self.check_and_get_column('w_name')
+
+			############### g3
+			ax = fig.add_subplot(gs[0:, 2])
+			ax_grid.append(ax)
+			if isinstance(args.get('g3_args'), dict):
+				g3_kw = {**g3_kw, **args['g3_args']}
+			sns.ecdfplot(ax=ax, data=df,
+			             x=cols['tx/s'], **g3_kw)
+			ax.set(title='tx/s CDF', xlabel='tx/s', ylabel='proportion')
+			ax.set_xlim([0, None])
+			if 'hue_title' in args.keys():
+				ax.get_legend().set_title(args['hue_title'])
+
+			############### g4
+			ax = fig.add_subplot(gs[0:, 3])
+			ax_grid.append(ax)
+			if isinstance(args.get('g4_args'), dict):
+				g4_kw = {**g4_kw, **args['g4_args']}
+			sns.ecdfplot(ax=ax, data=df, legend=None,
+			             x=cols['comp'], **g4_kw)
+			ax.set(title='Compaction CDF', xlabel='files', ylabel='proportion')
+
 			############### g5
 			ax = fig.add_subplot(gs[0:, 4])
 			ax_grid.append(ax)
@@ -1044,6 +1040,34 @@ class File:
 				g5_kw = {**g5_kw, **args['g5_args']}
 			sns.violinplot(ax=ax, data=df, y=cols['tx/s'], **g5_kw)
 			ax.set(title='tx/s', ylabel='tx/s', xlabel=args['hue_title'] if 'hue_title' in args.keys() else None)
+
+			############### g6
+			ax = fig.add_subplot(gs[0:, 5])
+			ax_grid.append(ax)
+			main_column = 'kv:tx/s'  # renamed name
+			max_items = 18
+			rename_drop_map = {  # None = drop
+				'ycsb[0].ops_per_s': 'kv:tx/s',
+				'performancemonitor.disk.diskstats': 'disk',
+				'performancemonitor.containers.ycsb_0.blkio': 'kv_io',
+				'performancemonitor.smart': 'smart',
+				'ycsb[0].socket_report.rocksdb.cfstats.compaction': 'kv',
+				'ycsb[0].READ_': None,
+				'ycsb[0].UPDATE_': None,
+				'performancemonitor.disk.iostat': None,
+				'performancemonitor.cpu': 'cpu',
+				'performancemonitor.fs': None,
+				'quantile.': None,
+			}
+			df2 = rename_drop_prefixes(self.pd_data, rename_drop_map).corr()[main_column]
+			columns_filtered = list(df2.sort_values(ascending=False, key=lambda x: abs(x)).keys())
+			if len(columns_filtered) > max_items:
+				columns_filtered = columns_filtered[0:max_items]
+			df2 = df2[columns_filtered].sort_values()
+			ax.barh(df2.keys(), df2.values)
+			ax.yaxis.tick_right()
+			ax.set_xlim([-1.1, 1.1])
+			ax.set(title='Main Correlations')
 
 			###############
 			for ax in ax_grid:
@@ -2458,6 +2482,44 @@ def flat_dict(source, prefix=None, ret=None):
 		ret[prefix if prefix is not None else 'NONE'] = source
 
 	return ret
+
+
+def rename_drop_prefixes(dataframe, prefix_map={}):
+	rename_dict = dict()
+	drop_list = []
+	for i in dataframe.keys():
+		for dk, dv in prefix_map.items():
+			if i.find(dk) == 0:
+				if dv is not None:
+					aux = i.replace(f'{dk}', '')
+					if len(aux) > 0 and aux[0] == '.':
+						aux = aux[1:]
+					aux = dv if aux == '' else f'{dv}:{aux}'
+					rename_dict[i] = aux
+				else:
+					drop_list.append(i)
+				break
+	df2 = dataframe.drop(drop_list, axis=1)
+	df2 = df2.rename(columns=rename_dict)
+	return df2
+
+
+def join_time(t, time_set, max_range):
+	if isinstance(t, int):
+		if t in time_set:
+			return t
+		c = 0
+		while c <= max_range:
+			tc1, tc2 = t-c, t+c
+			if tc1 in time_set: return tc1
+			if tc2 in time_set: return tc2
+			c += 1
+		return None
+	elif hasattr(t, '__iter__'):
+		return [join_time(i, time_set, max_range) for i in t]
+	else:
+		print('ERROR in join_time: t is neither int nor iterable')
+		return None
 
 
 def getFiles(dirname: str, str_filter: str = None, list_filter: list = None, lambda_filter=None) -> list:
