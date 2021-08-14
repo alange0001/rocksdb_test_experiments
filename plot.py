@@ -760,6 +760,31 @@ class File:
 	def resume_at(self):
 		pass  # TODO implement
 
+	def diagnostics(self, name='all'):
+		print('File:', self.filename)
+		if name in ['all', 'data_counts']:
+			ret = []
+			df = self.pd_data
+			ret.append(f'pd_data = {len(df)}')
+			for k in self._data.keys():
+				ret.append(f"{k} = {len(self.pd_data_exp(k))}")
+			print(f'\tData counts: {", ".join(ret)}')
+		if name in ['all', 'data_intervals']:
+			for e in self._data.keys():
+				t = [i for i in self.pd_data_exp(e)['time']]
+				time_count = [0]
+				data_count = [0]
+				for i in range(max(t) + 1):
+					time_count[-1] += 1
+					if i in t:
+						time_count.append(0)
+						data_count[-1] += 1
+					else:
+						data_count.append(0)
+				print(f'\tData intervals of experiment {e}: ' +
+				      f'consecutive = {sum(data_count) / len(data_count)}; ' +
+				      f'mean time per data = {sum(time_count) / len(time_count)}')
+
 	def get_graph_title(self, args, graph_default):
 		if args.get('title') is None:
 			return None
