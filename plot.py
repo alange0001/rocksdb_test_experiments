@@ -723,8 +723,8 @@ class File:
 			ret['w_name'] = ['w0' for _ in range(len(ret))]
 
 		self._pd_data = ret
-		self.tag_quantiles()
-		self.resume_at()
+		self.after_pd_tag_quantiles()
+		self.after_pd_agg_pressure()
 		if self._options.after_pd_data is not None:
 			self._options.after_pd_data(self)
 		return ret
@@ -736,7 +736,7 @@ class File:
 			return try_convert(value, float)
 		return value
 
-	def tag_quantiles(self):
+	def after_pd_tag_quantiles(self):
 		df = self.pd_data
 		keys = df.keys()
 		if 'w_name' not in keys:
@@ -757,33 +757,48 @@ class File:
 					 0.75 if r < 0.76 else
 					 1.0 for r in df2.rank(pct=True)]
 
-	def resume_at(self):
-		pass  # TODO implement
+	def after_pd_agg_pressure(self):
+		key_groups = {}
+		for i in self.pd_data.keys():
+			r = re.findall(r'performancemonitor\.containers\.at3_[0-9]+\.blkio\.(.+)', i)
+			if len(r) > 0:
+				k1 = r[0]
+				if k1 not in key_groups.keys(): key_groups[k1] = set()
+				key_groups[k1].add(i)
+
+		for k, cols in key_groups.items():
+			if k.find('/s.') < 0: continue
+			self.pd_data[f'agg.pressure.{k}'] = self.pd_data[cols].sum(axis=1)
 
 	def diagnostics(self, name='all'):
-		print('File:', self.filename)
+		print('Data diagnostics from file:', self.filename)
 		if name in ['all', 'data_counts']:
-			ret = []
+			print('\tData counts: ')
 			df = self.pd_data
-			ret.append(f'pd_data = {len(df)}')
+			print(f'\t\tpd_data = {len(df)}')
 			for k in self._data.keys():
-				ret.append(f"{k} = {len(self.pd_data_exp(k))}")
-			print(f'\tData counts: {", ".join(ret)}')
-		if name in ['all', 'data_intervals']:
+				print(f"\t\t{k} = {len(self.pd_data_exp(k))}")
+
+		if name in ['all', 'data_intervals'] and 'stats_interval' in self._params.keys():
+			print('\tStats_interval:')
+			expected = self._params['stats_interval']
 			for e in self._data.keys():
-				t = [i for i in self.pd_data_exp(e)['time']]
-				time_count = [0]
-				data_count = [0]
-				for i in range(max(t) + 1):
-					time_count[-1] += 1
-					if i in t:
-						time_count.append(0)
-						data_count[-1] += 1
-					else:
-						data_count.append(0)
-				print(f'\tData intervals of experiment {e}: ' +
-				      f'consecutive = {sum(data_count) / len(data_count)}; ' +
-				      f'mean time per data = {sum(time_count) / len(time_count)}')
+				print(f'\t\tExperiment task {e}: ', end='')
+
+				t = [i for i in self.pd_data_exp(e)['time'].sort_values()]
+				if len(t) < 2:
+					print('WARN: no sufficient data')
+					continue
+
+				gaps, repeated, delta_t = 0, 0, 0
+				for i in range(len(t)):
+					gaps += 1 if i < len(t) - 1 and t[i] + expected not in t else 0
+					delta_t += 0 if i == 0 else t[i] - t[i - 1]
+					repeated += 1 if i > 0 and t[i] == t[i - 1] else 0
+
+				print(f'gaps = {gaps}',
+				      f'mean interval = {delta_t / (len(t) - 1)}',
+				      f'repeated = {repeated}', sep='; ')
 
 	def get_graph_title(self, args, graph_default):
 		if args.get('title') is None:
@@ -979,7 +994,7 @@ class File:
 					axs[i, j].remove()
 
 			ax_grid = []
-			############### g1
+			# ============= g1 ==============
 			ax = fig.add_subplot(gs[0:, 0])
 			ax_grid.append(ax)
 			sns.lineplot(ax=ax, data=df, x=cols['time'],
@@ -1000,7 +1015,7 @@ class File:
 
 			self.add_upper_ticks(ax, None, None, args)
 
-			############### g2
+			# ============= g2 ==============
 			scale = 1024. ** 3
 			X = df['time_min']
 			for i in range(l_max + 1):
@@ -1037,7 +1052,7 @@ class File:
 				g4_kw['hue'] = self.check_and_get_column('w_name')
 				g5_kw['x']   = self.check_and_get_column('w_name')
 
-			############### g3
+			# ============= g3 ==============
 			ax = fig.add_subplot(gs[0:, 2])
 			ax_grid.append(ax)
 			if isinstance(args.get('g3_args'), dict):
@@ -1049,7 +1064,7 @@ class File:
 			if 'hue_title' in args.keys():
 				ax.get_legend().set_title(args['hue_title'])
 
-			############### g4
+			# ============= g4 ==============
 			ax = fig.add_subplot(gs[0:, 3])
 			ax_grid.append(ax)
 			if isinstance(args.get('g4_args'), dict):
@@ -1058,7 +1073,7 @@ class File:
 			             x=cols['comp'], **g4_kw)
 			ax.set(title='Compaction CDF', xlabel='files', ylabel='proportion')
 
-			############### g5
+			# ============= g5 ==============
 			ax = fig.add_subplot(gs[0:, 4])
 			ax_grid.append(ax)
 			if isinstance(args.get('g5_args'), dict):
@@ -1066,7 +1081,7 @@ class File:
 			sns.violinplot(ax=ax, data=df, y=cols['tx/s'], **g5_kw)
 			ax.set(title='tx/s', ylabel='tx/s', xlabel=args['hue_title'] if 'hue_title' in args.keys() else None)
 
-			############### g6
+			# ============= g6 ==============
 			ax = fig.add_subplot(gs[0:, 5])
 			ax_grid.append(ax)
 			main_column = 'kv:tx/s'  # renamed name
@@ -1080,10 +1095,16 @@ class File:
 				'ycsb[0].READ_': None,
 				'ycsb[0].UPDATE_': None,
 				'performancemonitor.disk.iostat': None,
+				'performancemonitor.cpu.times': None,
 				'performancemonitor.cpu': 'cpu',
 				'performancemonitor.fs': None,
+				'performancemonitor.containers': None,
 				'quantile.': None,
+				'agg.pressure': 'pressure',
+				'time': None,
 			}
+			for k in self.pd_data.filter(regex='.*\.time$').keys():
+				rename_drop_map[k] = None
 			df2 = rename_drop_prefixes(self.pd_data, rename_drop_map).corr()[main_column]
 			columns_filtered = list(df2.sort_values(ascending=False, key=lambda x: abs(x)).keys())
 			if len(columns_filtered) > max_items:
@@ -1137,7 +1158,7 @@ class File:
 				try: # due to a iostat bug when exporting kB/s in the JSON format. Using /proc/diskstats:
 					Yr = numpy.array([i['disk']['diskstats']['rkB/s']/1024  for i in self._data['performancemonitor']])
 					Yw = numpy.array([i['disk']['diskstats']['wkB/s']/1024  for i in self._data['performancemonitor']])
-					#print('using /proc/diskstats')
+					# print('using /proc/diskstats')
 				except: pass
 				if Yr is None or Yw is None:
 					Yr = numpy.array([i['disk']['iostat']['rkB/s']/1024  for i in self._data['performancemonitor']])
